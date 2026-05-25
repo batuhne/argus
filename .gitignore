@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Environments
+.venv/
+.env
+
+# Data and artifacts (DVC tracks these)
+data/
+mlruns/
+mlartifacts/
+*.parquet
+*.pkl
+*.joblib
+
+# Feast
+feature_repo/data/
+feature_repo/.ipynb_checkpoints/
+*.db
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Logs
+*.log
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+.claude/

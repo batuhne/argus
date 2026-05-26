@@ -1,0 +1,94 @@
+schema: '2.0'
+stages:
+  download:
+    cmd: PYTHONPATH=src python -m fraud.ingestion.download
+    deps:
+    - path: src/fraud/ingestion/download.py
+      hash: md5
+      md5: c75f3866a5f30499d48e777427535869
+      size: 2031
+    outs:
+    - path: data/raw/train_identity.csv
+      hash: md5
+      md5: 8487db5001c8bad139f3318d5d3db416
+      size: 26529680
+    - path: data/raw/train_transaction.csv
+      hash: md5
+      md5: 58b4038d8715f5e11007b826bef00ce7
+      size: 683351067
+  validate:
+    cmd: PYTHONPATH=src python -m fraud.validation.validate
+    deps:
+    - path: data/raw/train_identity.csv
+      hash: md5
+      md5: 8487db5001c8bad139f3318d5d3db416
+      size: 26529680
+    - path: data/raw/train_transaction.csv
+      hash: md5
+      md5: 58b4038d8715f5e11007b826bef00ce7
+      size: 683351067
+    - path: src/fraud/validation/schemas.py
+      hash: md5
+      md5: 2783bedf82b8229abab7d6f8e1f780eb
+      size: 1062
+    - path: src/fraud/validation/validate.py
+      hash: md5
+      md5: 4bca874e0b9072662fce27209fbbe4c3
+      size: 1651
+    outs:
+    - path: reports/validation_report.json
+      hash: md5
+      md5: a5e802f146d50aebef16143f19b4b33b
+      size: 85
+  clean:
+    cmd: PYTHONPATH=src python -m fraud.data.clean
+    deps:
+    - path: data/raw/train_identity.csv
+      hash: md5
+      md5: 8487db5001c8bad139f3318d5d3db416
+      size: 26529680
+    - path: data/raw/train_transaction.csv
+      hash: md5
+      md5: 58b4038d8715f5e11007b826bef00ce7
+      size: 683351067
+    - path: src/fraud/data/clean.py
+      hash: md5
+      md5: c0bb8baa592474b7e42a7c988f61a09a
+      size: 1931
+    params:
+      params.yaml:
+        data.sample_size:
+        seed: 42
+    outs:
+    - path: data/interim/clean.parquet
+      hash: md5
+      md5: 025e452cb896510a53d53907ae16aef2
+      size: 84003710
+  split:
+    cmd: PYTHONPATH=src python -m fraud.data.split
+    deps:
+    - path: data/interim/clean.parquet
+      hash: md5
+      md5: 025e452cb896510a53d53907ae16aef2
+      size: 84003710
+    - path: src/fraud/data/split.py
+      hash: md5
+      md5: 3e4a7811050485b18e6179dd542c17b6
+      size: 2011
+    params:
+      params.yaml:
+        split.test_fraction: 0.15
+        split.val_fraction: 0.15
+    outs:
+    - path: data/processed/test.parquet
+      hash: md5
+      md5: 63a380e064de9c447180d85f1fbcea36
+      size: 13433201
+    - path: data/processed/train.parquet
+      hash: md5
+      md5: 6b92be4ddfb2c7d132103246b481e117
+      size: 58941850
+    - path: data/processed/val.parquet
+      hash: md5
+      md5: a03be644cee800e86c7ade181a4da9df
+      size: 12480429

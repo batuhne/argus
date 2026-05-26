@@ -1,0 +1,44 @@
+stages:
+  download:
+    cmd: PYTHONPATH=src python -m fraud.ingestion.download
+    deps:
+      - src/fraud/ingestion/download.py
+    outs:
+      - data/raw/train_transaction.csv
+      - data/raw/train_identity.csv
+
+  validate:
+    cmd: PYTHONPATH=src python -m fraud.validation.validate
+    deps:
+      - src/fraud/validation/validate.py
+      - src/fraud/validation/schemas.py
+      - data/raw/train_transaction.csv
+      - data/raw/train_identity.csv
+    outs:
+      - reports/validation_report.json:
+          cache: false
+
+  clean:
+    cmd: PYTHONPATH=src python -m fraud.data.clean
+    deps:
+      - src/fraud/data/clean.py
+      - data/raw/train_transaction.csv
+      - data/raw/train_identity.csv
+    params:
+      - seed
+      - data.sample_size
+    outs:
+      - data/interim/clean.parquet
+
+  split:
+    cmd: PYTHONPATH=src python -m fraud.data.split
+    deps:
+      - src/fraud/data/split.py
+      - data/interim/clean.parquet
+    params:
+      - split.val_fraction
+      - split.test_fraction
+    outs:
+      - data/processed/train.parquet
+      - data/processed/val.parquet
+      - data/processed/test.parquet

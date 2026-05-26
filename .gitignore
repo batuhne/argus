@@ -17,12 +17,15 @@ htmlcov/
 .env
 
 # Data and artifacts (DVC tracks these)
-data/
-mlruns/
-mlartifacts/
+/data/
+/mlruns/
+/mlartifacts/
 *.parquet
 *.pkl
 *.joblib
+
+# DVC local remote storage
+/dvcstore/
 
 # Feast
 feature_repo/data/

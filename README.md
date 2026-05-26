@@ -30,4 +30,21 @@ cp .env.example .env   # fill in KAGGLE_API_TOKEN
 uv sync
 ```
 
+## Data
+
+The IEEE-CIS data comes from a Kaggle competition. Accept the rules once at
+https://www.kaggle.com/competitions/ieee-fraud-detection/rules, then put your
+Kaggle token in `.env` as `KAGGLE_API_TOKEN`.
+
+Build the dataset by running the pipeline, which downloads, validates, cleans,
+and splits the data:
+
+```
+uv run dvc repro
+```
+
+Splits are chronological by transaction time rather than random, so the model is
+never trained on transactions that occur after the ones it is evaluated on. Raw
+and processed data are tracked with DVC and stay out of git.
+
 More to come (quickstart, demo script, screenshots).

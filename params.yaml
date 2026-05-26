@@ -1,0 +1,9 @@
+seed: 42
+
+data:
+  # null uses the full dataset; set an integer for a faster dev loop
+  sample_size: null
+
+split:
+  val_fraction: 0.15
+  test_fraction: 0.15

@@ -1,7 +1,7 @@
 COMPOSE := docker compose -f infra/docker-compose.yml
 
 .DEFAULT_GOAL := help
-.PHONY: help up down restart logs ps fmt lint type test check
+.PHONY: help up down restart logs ps fmt lint type test check features
 
 help:
 	@echo "Targets:"
@@ -15,6 +15,7 @@ help:
 	@echo "  type     type check with mypy"
 	@echo "  test     run the test suite"
 	@echo "  check    lint, type check, and test"
+	@echo "  features build offline features, then apply and materialize to Redis"
 
 up:
 	$(COMPOSE) up -d --build --wait
@@ -43,3 +44,7 @@ test:
 	uv run pytest
 
 check: lint type test
+
+features:
+	PYTHONPATH=src uv run python -m fraud.features.build_offline
+	PYTHONPATH=src uv run python -m fraud.features.materialize

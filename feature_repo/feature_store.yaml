@@ -1,0 +1,9 @@
+project: argus
+provider: local
+registry: data/registry.db
+offline_store:
+  type: file
+online_store:
+  type: redis
+  connection_string: ${ARGUS_REDIS_CONNECTION}
+entity_key_serialization_version: 3

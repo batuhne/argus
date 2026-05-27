@@ -42,3 +42,12 @@ stages:
       - data/processed/train.parquet
       - data/processed/val.parquet
       - data/processed/test.parquet
+
+  features:
+    cmd: PYTHONPATH=src python -m fraud.features.build_offline
+    deps:
+      - src/fraud/features/build_offline.py
+      - src/fraud/transforms/feature_logic.py
+      - data/interim/clean.parquet
+    outs:
+      - feature_repo/data/card_features.parquet

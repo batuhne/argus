@@ -4,3 +4,7 @@ DATA_DIR = Path("data")
 RAW_DIR = DATA_DIR / "raw"
 INTERIM_DIR = DATA_DIR / "interim"
 PROCESSED_DIR = DATA_DIR / "processed"
+
+FEATURE_REPO_DIR = Path("feature_repo")
+FEATURE_DATA_DIR = FEATURE_REPO_DIR / "data"
+CARD_FEATURES_PATH = FEATURE_DATA_DIR / "card_features.parquet"

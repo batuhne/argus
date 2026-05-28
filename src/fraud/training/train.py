@@ -164,20 +164,35 @@ def _sweep_xgb(splits: Splits, cfg: TrainingConfig) -> BoostingHyperparams:
 def _train_and_pick_primary(
     best: BoostingHyperparams, splits: Splits, cfg: TrainingConfig
 ) -> ModelResult:
-    _, y_train = splits["train"]
-    scale_pos_weight = compute_scale_pos_weight(y_train)
-    xgb_result = _fit_and_evaluate_xgb(best, scale_pos_weight, splits, cfg)
-    lgb_result = _fit_and_evaluate_lgb(best, scale_pos_weight, splits, cfg)
-    _log_family_metrics(xgb_result)
-    _log_family_metrics(lgb_result)
-    mlflow.log_params({f"best_{key}": value for key, value in asdict(best).items()})
-    primary = (
-        xgb_result
-        if xgb_result.val_metrics["auprc"] >= lgb_result.val_metrics["auprc"]
-        else lgb_result
-    )
+    candidates = _train_candidates(best, splits, cfg)
+    _log_candidate_metrics(best, candidates)
+    primary = _pick_primary(*candidates)
     mlflow.set_tag("primary_family", primary.family)
     return primary
+
+
+def _train_candidates(
+    best: BoostingHyperparams, splits: Splits, cfg: TrainingConfig
+) -> tuple[ModelResult, ModelResult]:
+    scale_pos_weight = compute_scale_pos_weight(splits["train"][1])
+    return (
+        _fit_and_evaluate_xgb(best, scale_pos_weight, splits, cfg),
+        _fit_and_evaluate_lgb(best, scale_pos_weight, splits, cfg),
+    )
+
+
+def _log_candidate_metrics(
+    best: BoostingHyperparams, candidates: tuple[ModelResult, ModelResult]
+) -> None:
+    mlflow.log_params({f"best_{key}": value for key, value in asdict(best).items()})
+    for result in candidates:
+        _log_family_metrics(result)
+
+
+def _pick_primary(xgb_result: ModelResult, lgb_result: ModelResult) -> ModelResult:
+    if xgb_result.val_metrics["auprc"] >= lgb_result.val_metrics["auprc"]:
+        return xgb_result
+    return lgb_result
 
 
 def _fit_and_evaluate_xgb(

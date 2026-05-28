@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     seed: int = 42
 
     mlflow_tracking_uri: str = "http://localhost:5500"
+    mlflow_experiment_name: str = "argus"
+    argus_model_name: str = "argus_fraud_classifier"
     kafka_bootstrap_servers: str = "localhost:19092"
     redis_host: str = "localhost"
     redis_port: int = 6379

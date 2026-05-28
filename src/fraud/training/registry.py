@@ -1,17 +1,8 @@
 from __future__ import annotations
 
-from mlflow import MlflowClient, register_model
+from mlflow import MlflowClient
 
 
-def register_candidate(
-    run_id: str,
-    model_name: str,
-    *,
-    artifact_name: str = "model",
-    alias: str = "candidate",
-) -> int:
-    """Register the model from a run and point an alias at the new version."""
-    model_uri = f"runs:/{run_id}/{artifact_name}"
-    version = register_model(model_uri, model_name).version
-    MlflowClient().set_registered_model_alias(model_name, alias, version)
-    return int(version)
+def attach_alias(model_name: str, version: int, *, alias: str = "candidate") -> None:
+    """Point a registry alias at the given model version."""
+    MlflowClient().set_registered_model_alias(model_name, alias, str(version))

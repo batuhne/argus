@@ -51,4 +51,4 @@ features:
 	PYTHONPATH=src uv run python -m fraud.features.materialize
 
 train:
-	PYTHONPATH=src uv run python -m fraud.training.train
+	PYTHONUNBUFFERED=1 PYTHONPATH=src uv run python -m fraud.training.train

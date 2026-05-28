@@ -1,18 +1,23 @@
 from __future__ import annotations
 
+import gc
 import logging
 
 import optuna
 import pandas as pd
 from optuna.samplers import TPESampler
+from optuna.study import Study
 from optuna.trial import FrozenTrial, Trial, TrialState
 
+from fraud.common.logging import get_logger
 from fraud.evaluation.metrics import auprc
 from fraud.training.models import (
     BoostingHyperparams,
     build_xgb,
     compute_scale_pos_weight,
 )
+
+log = get_logger(__name__)
 
 
 def tune_xgb(
@@ -36,15 +41,35 @@ def tune_xgb(
         model = build_xgb(params, scale_pos_weight=scale_pos_weight, seed=seed)
         model.fit(x_train, y_train, eval_set=[(x_val, y_val)], verbose=False)
         scores = model.predict_proba(x_val)[:, 1]
-        return auprc(y_val, scores)
+        value = auprc(y_val, scores)
+        del model, scores
+        gc.collect()
+        return value
 
-    study.optimize(objective, n_trials=n_trials, timeout=timeout, catch=(ValueError, MemoryError))
+    study.optimize(
+        objective,
+        n_trials=n_trials,
+        timeout=timeout,
+        catch=(ValueError, MemoryError),
+        callbacks=[_log_trial],
+    )
 
     completed = [trial for trial in study.trials if trial.state == TrialState.COMPLETE]
     if not completed:
         raise RuntimeError("no successful Optuna trials; cannot select best params")
 
     return _params_from_trial(study.best_trial), float(study.best_value)
+
+
+def _log_trial(study: Study, trial: FrozenTrial) -> None:
+    best = study.best_value if study.best_trial is not None else float("nan")
+    log.info(
+        "optuna_trial",
+        number=trial.number,
+        state=trial.state.name,
+        value=trial.value,
+        best_so_far=best,
+    )
 
 
 def _sample_params(trial: Trial) -> BoostingHyperparams:

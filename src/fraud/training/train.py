@@ -27,7 +27,7 @@ from fraud.training.models import (
     build_xgb,
     compute_scale_pos_weight,
 )
-from fraud.training.registry import register_candidate
+from fraud.training.registry import attach_alias
 from fraud.training.tune import tune_xgb
 
 Splits = dict[str, tuple[pd.DataFrame, pd.Series]]
@@ -98,21 +98,49 @@ class TrainingResult:
 
 
 def run_training(cfg: TrainingConfig) -> TrainingResult:
+    log.info("loading_splits", repo_dir=str(cfg.repo_dir), processed_dir=str(cfg.processed_dir))
     splits = _load_and_split(cfg)
+    log.info(
+        "splits_loaded",
+        train_rows=len(splits["train"][1]),
+        val_rows=len(splits["val"][1]),
+        test_rows=len(splits["test"][1]),
+    )
     return train_with_splits(cfg, splits)
 
 
 def train_with_splits(cfg: TrainingConfig, splits: Splits) -> TrainingResult:
     _seed_everything(cfg.seed)
     _configure_mlflow(cfg)
+    _log_training_start(cfg, splits)
     with mlflow.start_run(run_name=cfg.run_name) as parent:
         _log_lineage_tags(splits)
         best = _sweep_xgb(splits, cfg)
         primary = _train_and_pick_primary(best, splits, cfg)
-        _log_artifacts(primary, splits, cfg)
-        version = register_candidate(parent.info.run_id, cfg.model_name, alias=cfg.candidate_alias)
+        version = _log_artifacts(primary, splits, cfg)
+        attach_alias(cfg.model_name, version, alias=cfg.candidate_alias)
         mlflow.set_tag("model_version", str(version))
+    log.info(
+        "training_done",
+        run_id=parent.info.run_id,
+        model_version=version,
+        primary=primary.family,
+        val_auprc=primary.val_metrics["auprc"],
+    )
     return TrainingResult(run_id=parent.info.run_id, model_version=version, primary=primary)
+
+
+def _log_training_start(cfg: TrainingConfig, splits: Splits) -> None:
+    log.info(
+        "training_start",
+        tracking_uri=cfg.tracking_uri,
+        experiment=cfg.experiment_name,
+        n_trials=cfg.optuna_n_trials,
+        timeout=cfg.optuna_timeout,
+        train_rows=len(splits["train"][1]),
+        val_rows=len(splits["val"][1]),
+        test_rows=len(splits["test"][1]),
+    )
 
 
 def _seed_everything(seed: int) -> None:
@@ -249,7 +277,7 @@ def _log_family_metrics(result: ModelResult) -> None:
             mlflow.log_metric(f"{result.family}_{split}_{name}", value)
 
 
-def _log_artifacts(primary: ModelResult, splits: Splits, cfg: TrainingConfig) -> None:
+def _log_artifacts(primary: ModelResult, splits: Splits, cfg: TrainingConfig) -> int:
     x_train, _ = splits["train"]
     x_val, y_val = splits["val"]
 
@@ -263,29 +291,32 @@ def _log_artifacts(primary: ModelResult, splits: Splits, cfg: TrainingConfig) ->
     mlflow.log_figure(shap_figure, "shap_summary_train.png")
 
     mlflow.log_dict(feature_schema_payload(x_train), "feature_schema.json")
-    _log_model(primary, input_example=x_train.head(5))
+    return _log_and_register_model(
+        primary, input_example=x_train.head(5), model_name=cfg.model_name
+    )
 
 
-def _log_model(primary: ModelResult, *, input_example: pd.DataFrame) -> None:
-    if primary.family == "xgboost":
-        mlflow.xgboost.log_model(primary.model, name="model", input_example=input_example)
-    else:
-        mlflow.lightgbm.log_model(primary.model, name="model", input_example=input_example)
+def _log_and_register_model(
+    primary: ModelResult, *, input_example: pd.DataFrame, model_name: str
+) -> int:
+    flavor = mlflow.xgboost if primary.family == "xgboost" else mlflow.lightgbm
+    info = flavor.log_model(
+        primary.model,
+        name="model",
+        input_example=input_example,
+        registered_model_name=model_name,
+    )
+    return int(info.registered_model_version)
 
 
 def main() -> None:
+    print("argus training launched", flush=True)
     settings = get_settings()
     configure_logging(settings.log_level, settings.log_json)
     cfg = TrainingConfig.from_settings()
+    log.info("config_loaded", experiment=cfg.experiment_name, model=cfg.model_name)
     result = run_training(cfg)
     _write_run_marker(cfg.artifacts_dir, result)
-    log.info(
-        "training_done",
-        run_id=result.run_id,
-        model_version=result.model_version,
-        primary=result.primary.family,
-        val_auprc=result.primary.val_metrics["auprc"],
-    )
 
 
 def _write_run_marker(artifacts_dir: Path, result: TrainingResult) -> None:

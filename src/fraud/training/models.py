@@ -48,9 +48,10 @@ def build_xgb(params: BoostingHyperparams, scale_pos_weight: float, seed: int) -
         objective="binary:logistic",
         eval_metric="aucpr",
         tree_method="hist",
+        max_bin=64,
         scale_pos_weight=scale_pos_weight,
         random_state=seed,
-        n_jobs=-1,
+        n_jobs=2,
     )
 
 
@@ -72,6 +73,6 @@ def build_lgb(params: BoostingHyperparams, scale_pos_weight: float, seed: int) -
         metric="average_precision",
         scale_pos_weight=scale_pos_weight,
         random_state=seed,
-        n_jobs=-1,
+        n_jobs=2,
         verbose=-1,
     )

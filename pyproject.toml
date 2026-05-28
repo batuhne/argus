@@ -38,7 +38,7 @@ dev = [
 ]
 
 [[tool.mypy.overrides]]
-module = ["xgboost.*", "lightgbm.*", "optuna.*", "shap.*", "matplotlib.*"]
+module = ["xgboost.*", "lightgbm.*", "optuna.*", "shap.*", "matplotlib.*", "sklearn.*"]
 ignore_missing_imports = true
 
 [build-system]

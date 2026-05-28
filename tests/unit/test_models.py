@@ -41,3 +41,11 @@ def test_build_lgb_propagates_seed_and_imbalance() -> None:
     assert model.scale_pos_weight == 12.5
     assert model.metric == "average_precision"
     assert model.objective == "binary"
+
+
+def test_build_lgb_num_leaves_matches_depth_capacity() -> None:
+    shallow = build_lgb(BoostingHyperparams(max_depth=3), scale_pos_weight=1.0, seed=0)
+    deep = build_lgb(BoostingHyperparams(max_depth=10), scale_pos_weight=1.0, seed=0)
+
+    assert shallow.num_leaves == 7
+    assert deep.num_leaves == 1023

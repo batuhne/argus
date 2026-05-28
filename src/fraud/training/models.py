@@ -55,9 +55,13 @@ def build_xgb(params: BoostingHyperparams, scale_pos_weight: float, seed: int) -
 
 
 def build_lgb(params: BoostingHyperparams, scale_pos_weight: float, seed: int) -> Any:
+    # LightGBM grows leaf-wise; cap num_leaves to a full binary tree at max_depth
+    # so its per-tree capacity matches XGBoost's level-wise growth at the same depth.
+    num_leaves = max(2, 2**params.max_depth - 1)
     return LGBMClassifier(
         n_estimators=params.n_estimators,
         max_depth=params.max_depth,
+        num_leaves=num_leaves,
         learning_rate=params.learning_rate,
         min_child_weight=params.min_child_weight,
         subsample=params.subsample,

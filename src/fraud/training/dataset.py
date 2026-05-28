@@ -1,18 +1,14 @@
-"""Assemble a point-in-time correct training frame from the feature store.
-
-For each transaction Feast joins the feature values as of that timestamp, so the
-frame never holds anything from the future.
-"""
+"""Point-in-time correct training frame via direct merge_asof on the offline parquet."""
 
 from __future__ import annotations
 
+import gc
 from pathlib import Path
 
 import pandas as pd
 
 from fraud.common.logging import configure_logging, get_logger
 from fraud.config import get_settings
-from fraud.features.store import open_feature_store
 from fraud.paths import FEATURE_REPO_DIR, PROCESSED_DIR
 from fraud.training.features import LABEL_COLUMN
 from fraud.transforms import feature_logic as fl
@@ -36,25 +32,59 @@ def _entity_frame(split_path: Path) -> pd.DataFrame:
     return keyed[["TransactionID", "card_id", "event_timestamp", "TransactionAmt", LABEL_COLUMN]]
 
 
+def _load_features(repo_dir: Path) -> pd.DataFrame:
+    features = pd.read_parquet(repo_dir / "data" / "card_features.parquet")
+    return features.sort_values("event_timestamp").reset_index(drop=True)
+
+
+def _join_split(entity_df: pd.DataFrame, features: pd.DataFrame) -> pd.DataFrame:
+    entity_sorted = entity_df.sort_values("event_timestamp").reset_index(drop=True)
+    merged = pd.merge_asof(
+        entity_sorted,
+        features,
+        on="event_timestamp",
+        by="card_id",
+        direction="backward",
+    )
+    merged["amt_log"] = fl.amount_log(merged["TransactionAmt"])
+    merged["amt_to_card_mean_24h"] = fl.amount_to_mean_ratio(
+        merged["TransactionAmt"], merged["card_amt_mean_24h"]
+    )
+    return merged
+
+
 def build_training_frame(
     split: str = "train",
     repo_dir: Path = FEATURE_REPO_DIR,
     processed_dir: Path = PROCESSED_DIR,
 ) -> pd.DataFrame:
+    features = _load_features(repo_dir)
     entity_df = _entity_frame(processed_dir / f"{split}.parquet")
-    store = open_feature_store(repo_dir)
-    job = store.get_historical_features(
-        entity_df=entity_df,
-        features=store.get_feature_service(FEATURE_SERVICE),
-    )
-    return job.to_df()
+    return _join_split(entity_df, features)
 
 
 def load_splits(
     repo_dir: Path = FEATURE_REPO_DIR,
     processed_dir: Path = PROCESSED_DIR,
 ) -> dict[str, pd.DataFrame]:
-    return {split: build_training_frame(split, repo_dir, processed_dir) for split in SPLITS}
+    features = _load_features(repo_dir)
+    result: dict[str, pd.DataFrame] = {}
+    for split in SPLITS:
+        log.info("loading_split", split=split)
+        entity_df = _entity_frame(processed_dir / f"{split}.parquet")
+        frame = _join_split(entity_df, features)
+        log.info(
+            "split_loaded",
+            split=split,
+            rows=len(frame),
+            mem_mb=int(frame.memory_usage(deep=True).sum() / 1e6),
+        )
+        result[split] = frame
+        del entity_df
+        gc.collect()
+    del features
+    gc.collect()
+    return result
 
 
 def main() -> None:

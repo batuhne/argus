@@ -68,4 +68,24 @@ Training data is assembled with a point-in-time correct join: for each
 transaction, Feast joins the feature values as they stood at that moment, so the
 join never reaches forward in time.
 
+## Training
+
+Training fits XGBoost as the primary model and LightGBM as a challenger over an
+Optuna AUPRC sweep. Each run logs hyperparameters, AUPRC and recall@k for every
+split, the PR curve, a SHAP summary, the feature schema, and lineage tags (git
+SHA, DVC lock hash, locked environment hash) so any registered model can be
+traced back to the exact code and data behind it. The best run is registered as
+a new version of the `argus_fraud_classifier` model and tagged with the
+`candidate` alias.
+
+```
+make up
+make features
+make train
+```
+
+Tunable knobs live under `training:` in `params.yaml` (Optuna trial budget and
+timeout, SHAP sample size, recall@k levels, alias name). The MLflow tracking
+server is at `http://localhost:5500` while the stack is up.
+
 More to come (quickstart, demo script, screenshots).

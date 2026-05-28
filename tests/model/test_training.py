@@ -1,27 +1,20 @@
 import pathlib
+from collections.abc import Callable
 
-import numpy as np
 import pandas as pd
 import pytest
 
-from fraud.training.features import FEATURE_COLUMNS, LABEL_COLUMN
 from fraud.training.train import TrainingConfig, train_with_splits
 
 pytestmark = pytest.mark.integration
 
-
-def _synthetic_split(rows: int, seed: int) -> tuple[pd.DataFrame, pd.Series]:
-    rng = np.random.default_rng(seed)
-    label = rng.integers(0, 2, size=rows)
-    base = rng.normal(size=(rows, len(FEATURE_COLUMNS)))
-    signal = label[:, None] * 3.0
-    x = pd.DataFrame(base + signal, columns=list(FEATURE_COLUMNS))
-    y = pd.Series(label, name=LABEL_COLUMN, dtype="int8")
-    return x, y
+SyntheticSplit = Callable[[int, int], tuple[pd.DataFrame, pd.Series]]
 
 
 def test_train_with_splits_registers_and_returns_metrics(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    make_synthetic_split: SyntheticSplit,
 ) -> None:
     monkeypatch.setenv("MLFLOW_TRACKING_URI", f"file://{tmp_path / 'mlruns'}")
     monkeypatch.setenv("MLFLOW_REGISTRY_URI", f"file://{tmp_path / 'mlruns'}")
@@ -41,9 +34,9 @@ def test_train_with_splits_registers_and_returns_metrics(
         artifacts_dir=tmp_path / "artifacts",
     )
     splits = {
-        "train": _synthetic_split(rows=600, seed=1),
-        "val": _synthetic_split(rows=200, seed=2),
-        "test": _synthetic_split(rows=200, seed=3),
+        "train": make_synthetic_split(600, 1),
+        "val": make_synthetic_split(200, 2),
+        "test": make_synthetic_split(200, 3),
     }
 
     result = train_with_splits(cfg, splits)

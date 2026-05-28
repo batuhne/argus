@@ -51,7 +51,7 @@ packages = ["src/fraud"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-src = ["src", "tests"]
+src = ["src", "tests", "pipelines"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "C4", "SIM", "PTH", "RUF"]
@@ -63,7 +63,7 @@ warn_unreachable = true
 warn_redundant_casts = true
 no_implicit_reexport = true
 mypy_path = "src"
-files = ["src", "tests"]
+files = ["src", "tests", "pipelines"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

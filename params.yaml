@@ -7,3 +7,12 @@ data:
 split:
   val_fraction: 0.15
   test_fraction: 0.15
+
+training:
+  candidate_alias: candidate
+  recall_at_k_levels: [0.005, 0.01, 0.05]
+  optuna:
+    n_trials: 30
+    timeout_seconds: 1800
+  shap:
+    sample_size: 2000

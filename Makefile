@@ -1,7 +1,7 @@
 COMPOSE := docker compose -f infra/docker-compose.yml
 
 .DEFAULT_GOAL := help
-.PHONY: help up down restart logs ps fmt lint type test check features
+.PHONY: help up down restart logs ps fmt lint type test check features train
 
 help:
 	@echo "Targets:"
@@ -16,6 +16,7 @@ help:
 	@echo "  test     run the test suite"
 	@echo "  check    lint, type check, and test"
 	@echo "  features build offline features, then apply and materialize to Redis"
+	@echo "  train    fit XGBoost + LightGBM with Optuna sweep and log to MLflow"
 
 up:
 	$(COMPOSE) up -d --build --wait
@@ -48,3 +49,6 @@ check: lint type test
 features:
 	PYTHONPATH=src uv run python -m fraud.features.build_offline
 	PYTHONPATH=src uv run python -m fraud.features.materialize
+
+train:
+	PYTHONPATH=src uv run python -m fraud.training.train

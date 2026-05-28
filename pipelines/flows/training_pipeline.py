@@ -13,12 +13,16 @@ def run_training_task(cfg: TrainingConfig) -> TrainingResult:
 
 
 @flow(name="argus-training")
-def training_flow(n_trials: int = 30, timeout: int | None = 1800) -> str:
+def training_flow(n_trials: int | None = None, timeout: int | None = None) -> str:
     settings = get_settings()
     configure_logging(settings.log_level, settings.log_json)
     cfg = TrainingConfig.from_settings(n_trials=n_trials, timeout=timeout)
     logger = get_run_logger()
-    logger.info("starting training: n_trials=%d timeout=%s", n_trials, timeout)
+    logger.info(
+        "starting training: n_trials=%s timeout=%s",
+        cfg.optuna_n_trials,
+        cfg.optuna_timeout,
+    )
     result = run_training_task(cfg)
     logger.info(
         "training done: run_id=%s version=%d primary=%s val_auprc=%.4f",

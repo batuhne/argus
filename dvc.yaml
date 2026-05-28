@@ -51,3 +51,19 @@ stages:
       - data/interim/clean.parquet
     outs:
       - feature_repo/data/card_features.parquet
+
+  train:
+    cmd: PYTHONPATH=src python -m fraud.training.train
+    deps:
+      - src/fraud/training
+      - src/fraud/evaluation
+      - src/fraud/common
+      - feature_repo/data/card_features.parquet
+      - data/processed/train.parquet
+      - data/processed/val.parquet
+      - data/processed/test.parquet
+    params:
+      - training
+    outs:
+      - artifacts/last_run.json:
+          cache: false

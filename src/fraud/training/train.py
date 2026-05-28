@@ -10,6 +10,7 @@ import mlflow
 import mlflow.lightgbm
 import mlflow.xgboost
 import pandas as pd
+import yaml
 
 from fraud.common.lineage import collect_lineage
 from fraud.common.logging import configure_logging, get_logger
@@ -51,19 +52,28 @@ class TrainingConfig:
 
     @classmethod
     def from_settings(
-        cls, *, n_trials: int = 30, timeout: int | None = 1800
+        cls, *, n_trials: int | None = None, timeout: int | None = None
     ) -> TrainingConfig:
         settings = get_settings()
+        params = _load_training_params()
+        optuna_cfg = params.get("optuna") or {}
+        shap_cfg = params.get("shap") or {}
         return cls(
             seed=settings.seed,
             tracking_uri=settings.mlflow_tracking_uri,
             experiment_name=settings.mlflow_experiment_name,
             model_name=settings.argus_model_name,
-            candidate_alias="candidate",
-            optuna_n_trials=n_trials,
-            optuna_timeout=timeout,
-            shap_sample_size=2000,
-            recall_at_k_levels=(0.005, 0.01, 0.05),
+            candidate_alias=str(params.get("candidate_alias", "candidate")),
+            optuna_n_trials=int(
+                n_trials if n_trials is not None else optuna_cfg.get("n_trials", 30)
+            ),
+            optuna_timeout=(
+                timeout if timeout is not None else optuna_cfg.get("timeout_seconds", 1800)
+            ),
+            shap_sample_size=int(shap_cfg.get("sample_size", 2000)),
+            recall_at_k_levels=tuple(
+                float(k) for k in params.get("recall_at_k_levels", [0.005, 0.01, 0.05])
+            ),
             run_name="argus_training",
             repo_dir=FEATURE_REPO_DIR,
             processed_dir=PROCESSED_DIR,
@@ -274,6 +284,16 @@ def _write_run_marker(artifacts_dir: Path, result: TrainingResult) -> None:
         "metrics": result.primary.val_metrics,
     }
     (artifacts_dir / "last_run.json").write_text(json.dumps(payload, indent=2))
+
+
+def _load_training_params(path: Path = Path("params.yaml")) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    data = yaml.safe_load(path.read_text())
+    if not isinstance(data, dict):
+        return {}
+    section = data.get("training") or {}
+    return section if isinstance(section, dict) else {}
 
 
 if __name__ == "__main__":

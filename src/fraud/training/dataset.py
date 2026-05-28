@@ -14,10 +14,11 @@ from fraud.common.logging import configure_logging, get_logger
 from fraud.config import get_settings
 from fraud.features.store import open_feature_store
 from fraud.paths import FEATURE_REPO_DIR, PROCESSED_DIR
+from fraud.training.features import LABEL_COLUMN
 from fraud.transforms import feature_logic as fl
 
 FEATURE_SERVICE = "card_activity"
-LABEL_COLUMN = "isFraud"
+SPLITS: tuple[str, ...] = ("train", "val", "test")
 SOURCE_COLUMNS = [
     "TransactionID",
     *fl.IDENTITY_COLUMNS,
@@ -47,6 +48,13 @@ def build_training_frame(
         features=store.get_feature_service(FEATURE_SERVICE),
     )
     return job.to_df()
+
+
+def load_splits(
+    repo_dir: Path = FEATURE_REPO_DIR,
+    processed_dir: Path = PROCESSED_DIR,
+) -> dict[str, pd.DataFrame]:
+    return {split: build_training_frame(split, repo_dir, processed_dir) for split in SPLITS}
 
 
 def main() -> None:

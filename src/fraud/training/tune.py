@@ -25,10 +25,7 @@ def tune_xgb(
     timeout: int | None,
     seed: int,
 ) -> tuple[BoostingHyperparams, float]:
-    """Maximize validation AUPRC over the XGBoost hyperparam space.
-
-    Raises RuntimeError when no trial completes (e.g., all raised, or budget hit zero).
-    """
+    """Maximize val AUPRC over the XGB search space; raises if no trial completes."""
     optuna.logging.get_logger("optuna").setLevel(logging.WARNING)
     sampler = TPESampler(seed=seed)
     study = optuna.create_study(direction="maximize", sampler=sampler)

@@ -13,10 +13,7 @@ FloatArray = NDArray[np.float64]
 
 
 def auprc(y_true: ArrayLike, y_score: ArrayLike) -> float:
-    """Average precision (area under the precision-recall curve).
-
-    Returns NaN when y_true holds only one class; the metric is undefined there.
-    """
+    """Average precision; returns NaN if y_true is single-class."""
     y_true_arr, y_score_arr = _coerce_pair(y_true, y_score)
     if not _has_both_classes(y_true_arr):
         return math.nan
@@ -24,10 +21,7 @@ def auprc(y_true: ArrayLike, y_score: ArrayLike) -> float:
 
 
 def recall_at_k(y_true: ArrayLike, y_score: ArrayLike, k: float) -> float:
-    """Recall when flagging the top k fraction (0 < k <= 1) of scores.
-
-    Returns NaN with no positives in y_true or with k outside (0, 1].
-    """
+    """Recall over the top k fraction; NaN if no positives or k outside (0, 1]."""
     if not 0.0 < k <= 1.0:
         return math.nan
     y_true_arr, y_score_arr = _coerce_pair(y_true, y_score)

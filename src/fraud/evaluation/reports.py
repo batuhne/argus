@@ -33,7 +33,7 @@ def feature_schema_payload(frame: pd.DataFrame) -> dict[str, dict[str, float | i
 def _scalar(value: Any) -> float | int | str | None:
     if value is None or (isinstance(value, float) and np.isnan(value)):
         return None
-    if isinstance(value, (int, float)):
+    if isinstance(value, int | float):
         return value
     if isinstance(value, np.integer):
         return int(value)

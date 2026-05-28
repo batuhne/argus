@@ -19,7 +19,7 @@ Early development. Not yet runnable end to end.
 
 Prefect, MLflow, Feast (Redis online store), DVC, Pandera, Redpanda, XGBoost and
 LightGBM, BentoML, Evidently, Prometheus and Grafana, GitHub Actions, k3d, and
-Terraform stubs. 
+Terraform stubs.
 
 ## Getting started
 

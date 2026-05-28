@@ -110,9 +110,7 @@ def train_with_splits(cfg: TrainingConfig, splits: Splits) -> TrainingResult:
         best = _sweep_xgb(splits, cfg)
         primary = _train_and_pick_primary(best, splits, cfg)
         _log_artifacts(primary, splits, cfg)
-        version = register_candidate(
-            parent.info.run_id, cfg.model_name, alias=cfg.candidate_alias
-        )
+        version = register_candidate(parent.info.run_id, cfg.model_name, alias=cfg.candidate_alias)
         mlflow.set_tag("model_version", str(version))
     return TrainingResult(run_id=parent.info.run_id, model_version=version, primary=primary)
 

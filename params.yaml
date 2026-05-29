@@ -16,3 +16,17 @@ training:
     timeout_seconds: 1800
   shap:
     sample_size: 2000
+
+evaluation:
+  champion_alias: champion
+  calibration:
+    method: isotonic
+  cost_matrix:
+    fn_cost_usd: 100.0
+    fp_cost_usd: 5.0
+  threshold:
+    recall_floor: 0.1
+    alert_volume_budget: 0.1
+  gate:
+    auprc_tolerance: 0.0
+    cost_tolerance: 0.0

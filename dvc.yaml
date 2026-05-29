@@ -64,6 +64,7 @@ stages:
       - data/processed/test.parquet
     params:
       - training
+      - evaluation
     outs:
       - artifacts/last_run.json:
           cache: false

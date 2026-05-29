@@ -9,15 +9,34 @@ import lightgbm as lgb
 import mlflow
 import mlflow.lightgbm
 import mlflow.xgboost
+import numpy as np
 import pandas as pd
 import yaml
+from numpy.typing import NDArray
 
 from fraud.common.lineage import collect_lineage
 from fraud.common.logging import configure_logging, get_logger
 from fraud.common.seed import set_seed
 from fraud.config import get_settings
+from fraud.evaluation.business import CostMatrix, expected_cost
+from fraud.evaluation.calibration import (
+    CalibrationResult,
+    fit_isotonic,
+    reliability_curve_figure,
+)
+from fraud.evaluation.gate import (
+    GateDecision,
+    GateMetrics,
+    GateTolerances,
+    decide,
+)
 from fraud.evaluation.metrics import auprc, pr_curve_figure, recall_at_k
 from fraud.evaluation.reports import feature_schema_payload, shap_summary_figure
+from fraud.evaluation.threshold import (
+    ThresholdConstraints,
+    ThresholdDecision,
+    select_threshold,
+)
 from fraud.paths import FEATURE_REPO_DIR, PROCESSED_DIR
 from fraud.training.dataset import FEATURE_SERVICE, load_splits
 from fraud.training.features import build_xy
@@ -27,7 +46,14 @@ from fraud.training.models import (
     build_xgb,
     compute_scale_pos_weight,
 )
-from fraud.training.registry import attach_alias
+from fraud.training.registry import (
+    CHAMPION_TAG_AUPRC,
+    CHAMPION_TAG_COST_PER_TX,
+    attach_alias,
+    get_alias_version,
+    get_version_tags,
+    write_version_tags,
+)
 from fraud.training.tune import tune_xgb
 
 Splits = dict[str, tuple[pd.DataFrame, pd.Series]]
@@ -41,10 +67,14 @@ class TrainingConfig:
     experiment_name: str
     model_name: str
     candidate_alias: str
+    champion_alias: str
     optuna_n_trials: int
     optuna_timeout: int | None
     shap_sample_size: int
     recall_at_k_levels: tuple[float, ...]
+    cost_matrix: CostMatrix
+    threshold_constraints: ThresholdConstraints
+    gate_tolerances: GateTolerances
     run_name: str
     repo_dir: Path
     processed_dir: Path
@@ -55,15 +85,17 @@ class TrainingConfig:
         cls, *, n_trials: int | None = None, timeout: int | None = None
     ) -> TrainingConfig:
         settings = get_settings()
-        params = _load_training_params()
-        optuna_cfg = params.get("optuna") or {}
-        shap_cfg = params.get("shap") or {}
+        training_params = _load_section_params("training")
+        evaluation_params = _load_section_params("evaluation")
+        optuna_cfg = training_params.get("optuna") or {}
+        shap_cfg = training_params.get("shap") or {}
         return cls(
             seed=settings.seed,
             tracking_uri=settings.mlflow_tracking_uri,
             experiment_name=settings.mlflow_experiment_name,
             model_name=settings.argus_model_name,
-            candidate_alias=str(params.get("candidate_alias", "candidate")),
+            candidate_alias=str(training_params.get("candidate_alias", "candidate")),
+            champion_alias=str(evaluation_params.get("champion_alias", "champion")),
             optuna_n_trials=int(
                 n_trials if n_trials is not None else optuna_cfg.get("n_trials", 30)
             ),
@@ -72,8 +104,11 @@ class TrainingConfig:
             ),
             shap_sample_size=int(shap_cfg.get("sample_size", 2000)),
             recall_at_k_levels=tuple(
-                float(k) for k in params.get("recall_at_k_levels", [0.005, 0.01, 0.05])
+                float(k) for k in training_params.get("recall_at_k_levels", [0.005, 0.01, 0.05])
             ),
+            cost_matrix=_cost_matrix_from(evaluation_params),
+            threshold_constraints=_threshold_constraints_from(evaluation_params),
+            gate_tolerances=_gate_tolerances_from(evaluation_params),
             run_name="argus_training",
             repo_dir=FEATURE_REPO_DIR,
             processed_dir=PROCESSED_DIR,
@@ -91,10 +126,19 @@ class ModelResult:
 
 
 @dataclass(frozen=True, slots=True)
+class GateOutcome:
+    threshold: ThresholdDecision
+    test_expected_cost_total: float
+    test_expected_cost_per_tx: float
+    decision: GateDecision
+
+
+@dataclass(frozen=True, slots=True)
 class TrainingResult:
     run_id: str
     model_version: int
     primary: ModelResult
+    gate: GateOutcome
 
 
 def run_training(cfg: TrainingConfig) -> TrainingResult:
@@ -120,14 +164,22 @@ def train_with_splits(cfg: TrainingConfig, splits: Splits) -> TrainingResult:
         version = _log_artifacts(primary, splits, cfg)
         attach_alias(cfg.model_name, version, alias=cfg.candidate_alias)
         mlflow.set_tag("model_version", str(version))
+        outcome = _evaluate_and_gate(primary, splits, version, cfg)
     log.info(
         "training_done",
         run_id=parent.info.run_id,
         model_version=version,
         primary=primary.family,
         val_auprc=primary.val_metrics["auprc"],
+        gate_promote=outcome.decision.promote,
+        gate_reason=outcome.decision.reason,
     )
-    return TrainingResult(run_id=parent.info.run_id, model_version=version, primary=primary)
+    return TrainingResult(
+        run_id=parent.info.run_id,
+        model_version=version,
+        primary=primary,
+        gate=outcome,
+    )
 
 
 def _log_training_start(cfg: TrainingConfig, splits: Splits) -> None:
@@ -309,6 +361,140 @@ def _log_and_register_model(
     return int(info.registered_model_version)
 
 
+def _evaluate_and_gate(
+    primary: ModelResult, splits: Splits, version: int, cfg: TrainingConfig
+) -> GateOutcome:
+    x_val, y_val = splits["val"]
+    x_test, y_test = splits["test"]
+    raw_val = primary.model.predict_proba(x_val)[:, 1]
+    raw_test = primary.model.predict_proba(x_test)[:, 1]
+
+    calibration = fit_isotonic(y_val, raw_val)
+    calibrated_val = calibration.calibrator.predict(raw_val)
+    calibrated_test = calibration.calibrator.predict(raw_test)
+    _log_calibration(calibration, y_test, calibrated_test)
+
+    threshold = select_threshold(
+        y_val,
+        calibrated_val,
+        matrix=cfg.cost_matrix,
+        constraints=cfg.threshold_constraints,
+    )
+    test_cost_total = expected_cost(y_test, calibrated_test, threshold.threshold, cfg.cost_matrix)
+    test_cost_per_tx = float(test_cost_total / len(y_test))
+    _log_threshold(threshold, test_cost_total, test_cost_per_tx)
+
+    challenger = GateMetrics(
+        auprc=primary.test_metrics["auprc"],
+        expected_cost_per_tx=test_cost_per_tx,
+    )
+    champion = _load_champion_metrics(cfg)
+    decision = decide(challenger, champion, tolerances=cfg.gate_tolerances)
+    _log_gate(decision)
+    if decision.promote:
+        _promote_champion(version, challenger, cfg)
+
+    log.info(
+        "gate_decision",
+        promote=decision.promote,
+        reason=decision.reason,
+        challenger_auprc=challenger.auprc,
+        challenger_cost_per_tx=challenger.expected_cost_per_tx,
+        threshold=threshold.threshold,
+    )
+    return GateOutcome(
+        threshold=threshold,
+        test_expected_cost_total=test_cost_total,
+        test_expected_cost_per_tx=test_cost_per_tx,
+        decision=decision,
+    )
+
+
+def _log_calibration(
+    result: CalibrationResult, y_test: pd.Series, calibrated_test: NDArray[np.float64]
+) -> None:
+    mlflow.log_metric("calibrated_val_brier_before", result.brier_before)
+    mlflow.log_metric("calibrated_val_brier_after", result.brier_after)
+    reliability = reliability_curve_figure(
+        y_test, calibrated_test, title="Test reliability (calibrated)"
+    )
+    mlflow.log_figure(reliability, "reliability_test.png")
+    log.info(
+        "calibration_fitted",
+        brier_before=result.brier_before,
+        brier_after=result.brier_after,
+    )
+
+
+def _log_threshold(
+    threshold: ThresholdDecision, test_cost_total: float, test_cost_per_tx: float
+) -> None:
+    mlflow.log_metric("threshold_value", threshold.threshold)
+    mlflow.log_metric("threshold_recall_val", threshold.recall)
+    mlflow.log_metric("threshold_precision_val", threshold.precision)
+    mlflow.log_metric("threshold_flagged_rate_val", threshold.flagged_rate)
+    mlflow.log_metric("expected_cost_total_usd_test", test_cost_total)
+    mlflow.log_metric("expected_cost_per_tx_usd_test", test_cost_per_tx)
+    log.info(
+        "threshold_selected",
+        threshold=threshold.threshold,
+        recall=threshold.recall,
+        precision=threshold.precision,
+        flagged_rate=threshold.flagged_rate,
+        test_cost_per_tx=test_cost_per_tx,
+    )
+
+
+def _log_gate(decision: GateDecision) -> None:
+    mlflow.set_tag("gate_reason", decision.reason)
+    mlflow.log_metric("gate_promote", 1.0 if decision.promote else 0.0)
+
+
+def _load_champion_metrics(cfg: TrainingConfig) -> GateMetrics | None:
+    champion_version = get_alias_version(cfg.model_name, cfg.champion_alias)
+    if champion_version is None:
+        return None
+    tags = get_version_tags(cfg.model_name, champion_version)
+    if CHAMPION_TAG_AUPRC not in tags or CHAMPION_TAG_COST_PER_TX not in tags:
+        log.warning(
+            "champion_tags_missing",
+            champion_version=champion_version,
+            present=sorted(tags.keys()),
+        )
+        return None
+    auprc_value = _safe_float(tags[CHAMPION_TAG_AUPRC])
+    cost_value = _safe_float(tags[CHAMPION_TAG_COST_PER_TX])
+    if auprc_value is None or cost_value is None:
+        log.warning(
+            "champion_tags_invalid",
+            champion_version=champion_version,
+            auprc=tags[CHAMPION_TAG_AUPRC],
+            cost=tags[CHAMPION_TAG_COST_PER_TX],
+        )
+        return None
+    return GateMetrics(auprc=auprc_value, expected_cost_per_tx=cost_value)
+
+
+def _safe_float(raw: str) -> float | None:
+    try:
+        value = float(raw)
+    except ValueError:
+        return None
+    return value if np.isfinite(value) else None
+
+
+def _promote_champion(version: int, challenger: GateMetrics, cfg: TrainingConfig) -> None:
+    attach_alias(cfg.model_name, version, alias=cfg.champion_alias)
+    write_version_tags(
+        cfg.model_name,
+        version,
+        {
+            CHAMPION_TAG_AUPRC: f"{challenger.auprc:.6f}",
+            CHAMPION_TAG_COST_PER_TX: f"{challenger.expected_cost_per_tx:.6f}",
+        },
+    )
+
+
 def main() -> None:
     print("argus training launched", flush=True)
     settings = get_settings()
@@ -326,18 +512,56 @@ def _write_run_marker(artifacts_dir: Path, result: TrainingResult) -> None:
         "model_version": result.model_version,
         "primary": result.primary.family,
         "metrics": result.primary.val_metrics,
+        "threshold": {
+            "value": result.gate.threshold.threshold,
+            "recall": result.gate.threshold.recall,
+            "precision": result.gate.threshold.precision,
+            "flagged_rate": result.gate.threshold.flagged_rate,
+        },
+        "test_expected_cost": {
+            "total_usd": result.gate.test_expected_cost_total,
+            "per_tx_usd": result.gate.test_expected_cost_per_tx,
+        },
+        "gate": {
+            "promote": result.gate.decision.promote,
+            "reason": result.gate.decision.reason,
+        },
     }
     (artifacts_dir / "last_run.json").write_text(json.dumps(payload, indent=2))
 
 
-def _load_training_params(path: Path = Path("params.yaml")) -> dict[str, Any]:
+def _load_section_params(name: str, path: Path = Path("params.yaml")) -> dict[str, Any]:
     if not path.is_file():
         return {}
     data = yaml.safe_load(path.read_text())
     if not isinstance(data, dict):
         return {}
-    section = data.get("training") or {}
+    section = data.get(name) or {}
     return section if isinstance(section, dict) else {}
+
+
+def _cost_matrix_from(params: dict[str, Any]) -> CostMatrix:
+    matrix_cfg = params.get("cost_matrix") or {}
+    return CostMatrix(
+        fn_cost_usd=float(matrix_cfg.get("fn_cost_usd", 100.0)),
+        fp_cost_usd=float(matrix_cfg.get("fp_cost_usd", 5.0)),
+    )
+
+
+def _threshold_constraints_from(params: dict[str, Any]) -> ThresholdConstraints:
+    threshold_cfg = params.get("threshold") or {}
+    return ThresholdConstraints(
+        recall_floor=float(threshold_cfg.get("recall_floor", 0.5)),
+        alert_volume_budget=float(threshold_cfg.get("alert_volume_budget", 0.01)),
+    )
+
+
+def _gate_tolerances_from(params: dict[str, Any]) -> GateTolerances:
+    gate_cfg = params.get("gate") or {}
+    return GateTolerances(
+        auprc_tolerance=float(gate_cfg.get("auprc_tolerance", 0.0)),
+        cost_tolerance=float(gate_cfg.get("cost_tolerance", 0.0)),
+    )
 
 
 if __name__ == "__main__":

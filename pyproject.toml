@@ -24,6 +24,7 @@ dependencies = [
     "shap>=0.46",
     "prefect>=3.0",
     "matplotlib>=3.9",
+    "bentoml>=1.4.39",
 ]
 
 [dependency-groups]
@@ -38,7 +39,7 @@ dev = [
 ]
 
 [[tool.mypy.overrides]]
-module = ["xgboost.*", "lightgbm.*", "optuna.*", "shap.*", "matplotlib.*", "sklearn.*"]
+module = ["xgboost.*", "lightgbm.*", "optuna.*", "shap.*", "matplotlib.*", "sklearn.*", "joblib.*"]
 ignore_missing_imports = true
 
 [build-system]

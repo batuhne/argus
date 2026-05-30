@@ -1,7 +1,7 @@
 COMPOSE := docker compose -f infra/docker-compose.yml
 
 .DEFAULT_GOAL := help
-.PHONY: help up down restart logs ps fmt lint type test check features train
+.PHONY: help up down restart logs ps fmt lint type test check features train serve
 
 help:
 	@echo "Targets:"
@@ -17,6 +17,7 @@ help:
 	@echo "  check    lint, type check, and test"
 	@echo "  features build offline features, then apply and materialize to Redis"
 	@echo "  train    fit XGBoost + LightGBM with Optuna sweep and log to MLflow"
+	@echo "  serve    serve the champion model over REST with BentoML"
 
 up:
 	$(COMPOSE) up -d --build --wait
@@ -52,3 +53,6 @@ features:
 
 train:
 	PYTHONUNBUFFERED=1 PYTHONPATH=src uv run python -m fraud.training.train
+
+serve:
+	PYTHONPATH=src uv run bentoml serve src/fraud/serving/service.py:FraudService --port 3000

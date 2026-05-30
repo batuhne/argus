@@ -6,6 +6,10 @@ from mlflow import MlflowClient
 
 CHAMPION_TAG_AUPRC = "test_auprc"
 CHAMPION_TAG_COST_PER_TX = "expected_cost_per_tx_usd"
+CHAMPION_TAG_THRESHOLD = "decision_threshold"
+CHAMPION_TAG_FAMILY = "primary_family"
+CALIBRATOR_ARTIFACT_DIR = "calibrator"
+CALIBRATOR_ARTIFACT_PATH = f"{CALIBRATOR_ARTIFACT_DIR}/calibrator.joblib"
 
 
 def attach_alias(model_name: str, version: int, *, alias: str = "candidate") -> None:
@@ -25,6 +29,11 @@ def get_version_tags(model_name: str, version: int) -> dict[str, str]:
     """Return the user tags stored on a registered model version."""
     mv = MlflowClient().get_model_version(model_name, str(version))
     return dict(mv.tags or {})
+
+
+def get_version_run_id(model_name: str, version: int) -> str:
+    """Return the source run id of a registered model version."""
+    return str(MlflowClient().get_model_version(model_name, str(version)).run_id)
 
 
 def write_version_tags(model_name: str, version: int, tags: Mapping[str, str]) -> None:

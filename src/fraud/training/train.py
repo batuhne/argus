@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+import joblib
 import lightgbm as lgb
 import mlflow
 import mlflow.lightgbm
@@ -47,8 +49,11 @@ from fraud.training.models import (
     compute_scale_pos_weight,
 )
 from fraud.training.registry import (
+    CALIBRATOR_ARTIFACT_DIR,
     CHAMPION_TAG_AUPRC,
     CHAMPION_TAG_COST_PER_TX,
+    CHAMPION_TAG_FAMILY,
+    CHAMPION_TAG_THRESHOLD,
     attach_alias,
     get_alias_version,
     get_version_tags,
@@ -392,7 +397,9 @@ def _evaluate_and_gate(
     decision = decide(challenger, champion, tolerances=cfg.gate_tolerances)
     _log_gate(decision)
     if decision.promote:
-        _promote_champion(version, challenger, cfg)
+        _promote_champion(
+            version, challenger, cfg, threshold=threshold.threshold, family=primary.family
+        )
 
     log.info(
         "gate_decision",
@@ -419,11 +426,19 @@ def _log_calibration(
         y_test, calibrated_test, title="Test reliability (calibrated)"
     )
     mlflow.log_figure(reliability, "reliability_test.png")
+    _log_calibrator_artifact(result)
     log.info(
         "calibration_fitted",
         brier_before=result.brier_before,
         brier_after=result.brier_after,
     )
+
+
+def _log_calibrator_artifact(result: CalibrationResult) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "calibrator.joblib"
+        joblib.dump(result.calibrator, path)
+        mlflow.log_artifact(str(path), artifact_path=CALIBRATOR_ARTIFACT_DIR)
 
 
 def _log_threshold(
@@ -483,7 +498,14 @@ def _safe_float(raw: str) -> float | None:
     return value if np.isfinite(value) else None
 
 
-def _promote_champion(version: int, challenger: GateMetrics, cfg: TrainingConfig) -> None:
+def _promote_champion(
+    version: int,
+    challenger: GateMetrics,
+    cfg: TrainingConfig,
+    *,
+    threshold: float,
+    family: str,
+) -> None:
     attach_alias(cfg.model_name, version, alias=cfg.champion_alias)
     write_version_tags(
         cfg.model_name,
@@ -491,6 +513,8 @@ def _promote_champion(version: int, challenger: GateMetrics, cfg: TrainingConfig
         {
             CHAMPION_TAG_AUPRC: f"{challenger.auprc:.6f}",
             CHAMPION_TAG_COST_PER_TX: f"{challenger.expected_cost_per_tx:.6f}",
+            CHAMPION_TAG_THRESHOLD: f"{threshold:.6f}",
+            CHAMPION_TAG_FAMILY: family,
         },
     )
 

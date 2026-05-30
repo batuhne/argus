@@ -1,0 +1,7 @@
+service: "src/fraud/serving/service.py:FraudService"
+name: argus_fraud_serving
+include:
+  - "src/fraud/**/*.py"
+  - "feature_repo/**"
+envvar:
+  PYTHONPATH: src

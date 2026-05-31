@@ -8,7 +8,11 @@ from fraud.config import get_settings
 
 TRANSACTIONS_TOPIC = "transactions"
 PREDICTIONS_TOPIC = "predictions"
+SCORED_FEATURES_TOPIC = "scored-features"
+LABELS_TOPIC = "labels"
+DRIFT_ALERTS_TOPIC = "drift-alerts"
 CONSUMER_GROUP = "argus-fraud-consumer"
+MONITOR_GROUP = "argus-fraud-monitor"
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,12 +53,47 @@ class PredictionEvent(BaseModel):
     model_version: int
 
 
+class ScoredFeaturesEvent(BaseModel):
+    """Inference log emitted by serving: the exact features the model scored."""
+
+    transaction_id: str = Field(min_length=1, max_length=128)
+    model_version: int
+    fraud_score: float
+    decision: bool
+    features: dict[str, float]
+
+
+class LabelEvent(BaseModel):
+    """Ground-truth outcome that arrives after the prediction (chargeback lag)."""
+
+    transaction_id: str = Field(min_length=1, max_length=128)
+    is_fraud: int = Field(ge=0, le=1)
+
+
+class DriftAlertEvent(BaseModel):
+    """Machine-readable retraining trigger published when a monitor breach persists."""
+
+    kind: str
+    metric: str
+    value: float
+    threshold: float
+    detected_at: str
+
+
 def serialize(event: BaseModel) -> bytes:
     return event.model_dump_json().encode("utf-8")
 
 
 def deserialize_transaction(payload: bytes) -> TransactionEvent:
     return TransactionEvent.model_validate_json(payload)
+
+
+def deserialize_scored_features(payload: bytes) -> ScoredFeaturesEvent:
+    return ScoredFeaturesEvent.model_validate_json(payload)
+
+
+def deserialize_label(payload: bytes) -> LabelEvent:
+    return LabelEvent.model_validate_json(payload)
 
 
 def seconds_per_message(rate_per_second: float) -> float:

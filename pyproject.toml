@@ -27,6 +27,8 @@ dependencies = [
     "bentoml>=1.4.39",
     "confluent-kafka>=2.14.0",
     "requests>=2.34.2",
+    "evidently>=0.7.21",
+    "prometheus-client>=0.25.0",
 ]
 
 [dependency-groups]
@@ -42,7 +44,7 @@ dev = [
 ]
 
 [[tool.mypy.overrides]]
-module = ["xgboost.*", "lightgbm.*", "optuna.*", "shap.*", "matplotlib.*", "sklearn.*", "joblib.*"]
+module = ["xgboost.*", "lightgbm.*", "optuna.*", "shap.*", "matplotlib.*", "sklearn.*", "joblib.*", "evidently.*"]
 ignore_missing_imports = true
 
 [build-system]

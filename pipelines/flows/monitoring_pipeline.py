@@ -11,16 +11,23 @@ from fraud.config import get_settings
 from fraud.monitoring.baseline import load_baseline
 from fraud.monitoring.config import MonitoringConfig
 from fraud.monitoring.drift import build_drift_report, compute_feature_drift
-from fraud.training.dataset import build_training_frame
+from fraud.training.dataset import SPLITS, build_training_frame
 from fraud.training.features import FEATURE_COLUMNS, build_xy
 
 MONITORING_EXPERIMENT = "argus-monitoring"
 
 
+def validated_split(current_split: str) -> str:
+    """Guard the split name so it cannot escape the known dataset files."""
+    if current_split not in SPLITS:
+        raise ValueError(f"current_split must be one of {SPLITS}, got {current_split!r}")
+    return current_split
+
+
 @task
 def evaluate_drift(cfg: MonitoringConfig, current_split: str) -> dict[str, float]:
     reference = load_baseline(cfg)
-    current, _ = build_xy(build_training_frame(current_split))
+    current, _ = build_xy(build_training_frame(validated_split(current_split)))
     snapshot = build_drift_report(reference, current, FEATURE_COLUMNS)
     drift = compute_feature_drift(
         reference, current, FEATURE_COLUMNS, psi_threshold=cfg.psi_threshold
@@ -34,6 +41,7 @@ def monitoring_flow(current_split: str = "test") -> dict[str, float]:
     settings = get_settings()
     configure_logging(settings.log_level, settings.log_json)
     cfg = MonitoringConfig.from_settings()
+    current_split = validated_split(current_split)
     logger = get_run_logger()
     logger.info("drift evaluation: split=%s baseline_alias=%s", current_split, cfg.champion_alias)
     psi = evaluate_drift(cfg, current_split)

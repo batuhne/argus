@@ -73,7 +73,7 @@ files = ["src", "tests", "pipelines"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 addopts = "-ra -q"
 markers = [
     "integration: requires the docker compose stack",

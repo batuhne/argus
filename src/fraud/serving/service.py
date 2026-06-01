@@ -3,12 +3,15 @@ from __future__ import annotations
 import time
 
 import bentoml
+import pandas as pd
 from pydantic import BaseModel, Field
 
 from fraud.common.logging import configure_logging, get_logger
 from fraud.config import get_settings
+from fraud.ingestion.stream import ScoredFeaturesEvent
 from fraud.serving.config import ServingConfig
 from fraud.serving.features import OnlineFeatureFetcher, redis_reachable
+from fraud.serving.inference_log import InferenceLogger
 from fraud.serving.model import load_champion
 from fraud.serving.predict import score_transaction
 
@@ -40,6 +43,7 @@ class FraudService:
         self._cfg = ServingConfig.from_settings()
         self._bundle = load_champion(self._cfg)
         self._fetcher = OnlineFeatureFetcher(self._cfg)
+        self._inference_log = InferenceLogger.from_bootstrap(settings.kafka_bootstrap_servers)
         log.info(
             "model_loaded",
             version=self._bundle.version,
@@ -53,6 +57,7 @@ class FraudService:
         features = self._fetcher.fetch(request.card_id, request.amount)
         scored = score_transaction(self._bundle, features)
         latency_ms = (time.perf_counter() - start) * MILLISECONDS_PER_SECOND
+        self._log_inference(request.transaction_id, features, scored.fraud_score, scored.decision)
         log.info(
             "prediction_served",
             transaction_id=request.transaction_id,
@@ -67,6 +72,21 @@ class FraudService:
             threshold=scored.threshold,
             model_version=self._bundle.version,
             latency_ms=latency_ms,
+        )
+
+    def _log_inference(
+        self, transaction_id: str | None, features: pd.DataFrame, fraud_score: float, decision: bool
+    ) -> None:
+        if transaction_id is None:
+            return
+        self._inference_log.log(
+            ScoredFeaturesEvent(
+                transaction_id=transaction_id,
+                model_version=self._bundle.version,
+                fraud_score=fraud_score,
+                decision=decision,
+                features={str(name): float(value) for name, value in features.iloc[0].items()},
+            )
         )
 
     def __is_alive__(self) -> bool:

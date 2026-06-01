@@ -30,3 +30,16 @@ evaluation:
   gate:
     auprc_tolerance: 0.0
     cost_tolerance: 0.0
+
+monitoring:
+  # PSI above this on any model-input feature is a meaningful population shift
+  psi_threshold: 0.2
+  # rolling AUPRC below this signals concept drift / performance decay
+  auprc_floor: 0.05
+  # consecutive breach recompute cycles before a drift-alert is published
+  drift_debounce_cycles: 3
+  window_size: 5000
+  join_retention: 20000
+  recompute_interval_seconds: 15.0
+  min_matched_for_auprc: 200
+  min_current_for_drift: 500

@@ -49,6 +49,7 @@ from fraud.training.models import (
     compute_scale_pos_weight,
 )
 from fraud.training.registry import (
+    BASELINE_ARTIFACT_DIR,
     CALIBRATOR_ARTIFACT_DIR,
     CHAMPION_TAG_AUPRC,
     CHAMPION_TAG_COST_PER_TX,
@@ -62,6 +63,7 @@ from fraud.training.registry import (
 from fraud.training.tune import tune_xgb
 
 Splits = dict[str, tuple[pd.DataFrame, pd.Series]]
+BASELINE_SAMPLE_SIZE = 50000
 log = get_logger(__name__)
 
 
@@ -348,6 +350,7 @@ def _log_artifacts(primary: ModelResult, splits: Splits, cfg: TrainingConfig) ->
     mlflow.log_figure(shap_figure, "shap_summary_train.png")
 
     mlflow.log_dict(feature_schema_payload(x_train), "feature_schema.json")
+    _log_baseline_artifact(x_train, cfg.seed)
     return _log_and_register_model(
         primary, input_example=x_train.head(5), model_name=cfg.model_name
     )
@@ -439,6 +442,16 @@ def _log_calibrator_artifact(result: CalibrationResult) -> None:
         path = Path(tmp) / "calibrator.joblib"
         joblib.dump(result.calibrator, path)
         mlflow.log_artifact(str(path), artifact_path=CALIBRATOR_ARTIFACT_DIR)
+
+
+def _log_baseline_artifact(x_train: pd.DataFrame, seed: int) -> None:
+    """Freeze a training feature sample as the drift-monitoring reference."""
+    sample_size = min(BASELINE_SAMPLE_SIZE, len(x_train))
+    baseline = x_train.sample(sample_size, random_state=seed)
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "baseline.parquet"
+        baseline.to_parquet(path, index=False)
+        mlflow.log_artifact(str(path), artifact_path=BASELINE_ARTIFACT_DIR)
 
 
 def _log_threshold(

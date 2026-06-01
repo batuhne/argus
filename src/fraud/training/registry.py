@@ -10,6 +10,8 @@ CHAMPION_TAG_THRESHOLD = "decision_threshold"
 CHAMPION_TAG_FAMILY = "primary_family"
 CALIBRATOR_ARTIFACT_DIR = "calibrator"
 CALIBRATOR_ARTIFACT_PATH = f"{CALIBRATOR_ARTIFACT_DIR}/calibrator.joblib"
+BASELINE_ARTIFACT_DIR = "monitoring"
+BASELINE_ARTIFACT_PATH = f"{BASELINE_ARTIFACT_DIR}/baseline.parquet"
 
 
 def attach_alias(model_name: str, version: int, *, alias: str = "candidate") -> None:

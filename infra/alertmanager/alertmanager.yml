@@ -1,0 +1,12 @@
+route:
+  receiver: default
+  group_by: ["alertname"]
+  group_wait: 10s
+  group_interval: 1m
+  repeat_interval: 1h
+
+# Local stack: alerts are grouped and visible in the Alertmanager UI. The
+# machine retraining trigger is the drift-alerts topic, published by the
+# monitoring service, not this notification path.
+receivers:
+  - name: default

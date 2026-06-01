@@ -18,6 +18,7 @@ volumes:
   minio-data:
   prometheus-data:
   grafana-data:
+  alertmanager-data:
 
 services:
   postgres:
@@ -162,6 +163,7 @@ services:
       - "9090:9090"
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
       - prometheus-data:/prometheus
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
@@ -184,9 +186,100 @@ services:
       - "3000:3000"
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
       - grafana-data:/var/lib/grafana
     healthcheck:
       test: ["CMD-SHELL", "wget --spider -q http://localhost:3000/api/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10
+
+  alertmanager:
+    <<: *restart
+    image: prom/alertmanager:v0.27.0
+    networks: [argus]
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9093/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # The serving and monitoring apps need a trained champion, so they sit behind
+  # the "app" profile and start after the model is in the registry.
+  serving:
+    <<: *restart
+    profiles: ["app"]
+    build:
+      context: ..
+      dockerfile: infra/docker/app.Dockerfile
+    networks: [argus]
+    depends_on:
+      mlflow:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      AWS_DEFAULT_REGION: us-east-1
+      KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      ARGUS_REDIS_CONNECTION: redis:6379
+    command:
+      - bentoml
+      - serve
+      - src/fraud/serving/service.py:FraudService
+      - --host=0.0.0.0
+      - --port=3001
+    volumes:
+      - ../feature_repo:/app/feature_repo:ro
+    ports:
+      - "3001:3001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:3001/readyz').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+  monitoring:
+    <<: *restart
+    profiles: ["app"]
+    build:
+      context: ..
+      dockerfile: infra/docker/app.Dockerfile
+    networks: [argus]
+    depends_on:
+      mlflow:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      AWS_DEFAULT_REGION: us-east-1
+      KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+    command: ["python", "-m", "fraud.monitoring.exporter"]
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/metrics').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s

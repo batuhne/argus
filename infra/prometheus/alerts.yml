@@ -1,0 +1,68 @@
+groups:
+  - name: serving_slo
+    rules:
+      # Fast burn: error ratio over both 1h and 5m above 14.4x the 99.9% budget.
+      - alert: ServingFastErrorBudgetBurn
+        expr: |
+          (
+            sum(rate(bentoml_service_request_total{http_response_code=~"5.."}[1h]))
+            / sum(rate(bentoml_service_request_total[1h]))
+          ) > 0.0144
+          and
+          (
+            sum(rate(bentoml_service_request_total{http_response_code=~"5.."}[5m]))
+            / sum(rate(bentoml_service_request_total[5m]))
+          ) > 0.0144
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Serving is burning the error budget fast"
+          description: "5xx ratio exceeds 14.4x the 99.9% availability budget."
+
+      # Slow burn: sustained error rate above the 0.1% SLO.
+      - alert: ServingSlowErrorBudgetBurn
+        expr: |
+          (
+            sum(rate(bentoml_service_request_total{http_response_code=~"5.."}[6h]))
+            / sum(rate(bentoml_service_request_total[6h]))
+          ) > 0.001
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Serving error rate above the 0.1% SLO"
+          description: "Sustained 5xx ratio is consuming the error budget."
+
+      - alert: ServingLatencySLOBreach
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum(rate(bentoml_service_request_duration_seconds_bucket[5m])) by (le)
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Serving p99 latency above the 50ms budget"
+          description: "Request duration p99 exceeds the latency SLO."
+
+  - name: model_health
+    rules:
+      - alert: FeatureDriftDetected
+        expr: max(argus_feature_drift_psi) > 0.2
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Model-input feature drift detected"
+          description: "A feature PSI is above 0.2 versus the training baseline."
+
+      - alert: ModelPerformanceDecay
+        expr: argus_rolling_auprc < 0.05 and argus_matched_join > 200
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Rolling AUPRC below the floor"
+          description: "Concept drift or performance decay on labeled predictions."

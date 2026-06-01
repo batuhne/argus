@@ -1,7 +1,8 @@
 COMPOSE := docker compose -f infra/docker-compose.yml
 
 .DEFAULT_GOAL := help
-.PHONY: help up down restart logs ps fmt lint type test check features train serve consume produce
+.PHONY: help up down restart logs ps fmt lint type test check features train serve consume produce \
+        up-app down-app label-sim monitor monitor-report
 
 help:
 	@echo "Targets:"
@@ -20,6 +21,11 @@ help:
 	@echo "  serve    serve the champion model over REST with BentoML"
 	@echo "  consume  consume transactions, score them, publish predictions"
 	@echo "  produce  replay transactions onto the stream at the configured rate"
+	@echo "  up-app   build and start the serving and monitoring containers"
+	@echo "  down-app stop the serving and monitoring containers"
+	@echo "  label-sim   replay delayed ground-truth labels onto the stream"
+	@echo "  monitor     run the drift and performance exporter"
+	@echo "  monitor-report  build the Evidently drift report and log it to MLflow"
 
 up:
 	$(COMPOSE) up -d --build --wait
@@ -64,3 +70,18 @@ consume:
 
 produce:
 	PYTHONUNBUFFERED=1 PYTHONPATH=src uv run python -m fraud.ingestion.producer
+
+up-app:
+	$(COMPOSE) --profile app up -d --build --wait
+
+down-app:
+	$(COMPOSE) --profile app down
+
+label-sim:
+	PYTHONUNBUFFERED=1 PYTHONPATH=src uv run python -m fraud.ingestion.label_simulator
+
+monitor:
+	PYTHONUNBUFFERED=1 PYTHONPATH=src uv run python -m fraud.monitoring.exporter
+
+monitor-report:
+	PYTHONUNBUFFERED=1 PYTHONPATH=src uv run python -m pipelines.flows.monitoring_pipeline

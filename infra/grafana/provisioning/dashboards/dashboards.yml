@@ -1,0 +1,10 @@
+apiVersion: 1
+
+providers:
+  - name: argus
+    type: file
+    disableDeletion: true
+    editable: false
+    options:
+      path: /etc/grafana/dashboards
+      foldersFromFilesStructure: false

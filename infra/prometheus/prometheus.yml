@@ -2,13 +2,24 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
 scrape_configs:
   - job_name: prometheus
     static_configs:
       - targets: ["localhost:9090"]
 
-  # The serving service exposes metrics once it is running. Declared up front so
-  # the scrape config stays stable; it reports down until the service is up.
+  # Serving and monitoring report down until the "app" profile is started.
   - job_name: argus-serving
     static_configs:
       - targets: ["serving:3001"]
+
+  - job_name: argus-monitoring
+    static_configs:
+      - targets: ["monitoring:8000"]

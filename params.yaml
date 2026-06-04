@@ -43,3 +43,21 @@ monitoring:
   recompute_interval_seconds: 15.0
   min_matched_for_auprc: 200
   min_current_for_drift: 500
+
+retraining:
+  deployment_name: argus-retraining/argus-retraining
+  cron: "0 3 * * 1"
+  # back-to-back drift alerts inside this window collapse into one retrain
+  cooldown_seconds: 3600.0
+  n_trials: 30
+  timeout_seconds: 1800
+
+canary:
+  # traffic share handed to the candidate at each ramp step
+  traffic_steps: [0.05, 0.25, 1.0]
+  max_p99_latency_ms: 50.0
+  max_error_rate: 0.001
+  min_auprc_ratio: 0.98
+  min_agreement: 0.95
+  min_samples: 500
+  max_holds_per_step: 3

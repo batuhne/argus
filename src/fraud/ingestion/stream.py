@@ -13,6 +13,7 @@ LABELS_TOPIC = "labels"
 DRIFT_ALERTS_TOPIC = "drift-alerts"
 CONSUMER_GROUP = "argus-fraud-consumer"
 MONITOR_GROUP = "argus-fraud-monitor"
+RETRAIN_GROUP = "argus-fraud-retrainer"
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,6 +95,10 @@ def deserialize_scored_features(payload: bytes) -> ScoredFeaturesEvent:
 
 def deserialize_label(payload: bytes) -> LabelEvent:
     return LabelEvent.model_validate_json(payload)
+
+
+def deserialize_drift_alert(payload: bytes) -> DriftAlertEvent:
+    return DriftAlertEvent.model_validate_json(payload)
 
 
 def seconds_per_message(rate_per_second: float) -> float:

@@ -1,0 +1,49 @@
+name: retrain-schedule
+
+on:
+  schedule:
+    # Weekly Monday 03:00 UTC, mirroring the Prefect deployment cron.
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Trigger reason recorded on the run"
+        default: "scheduled-ci"
+
+permissions:
+  contents: read
+
+jobs:
+  trigger-retrain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.16"
+          python-version: "3.11"
+          enable-cache: true
+      - name: Sync dependencies
+        run: uv sync --frozen
+      - name: Trigger Prefect retraining deployment
+        env:
+          PREFECT_API_URL: ${{ secrets.PREFECT_API_URL }}
+          PREFECT_API_KEY: ${{ secrets.PREFECT_API_KEY }}
+          REASON: ${{ inputs.reason || 'scheduled-ci' }}
+        run: |
+          if [ -z "${PREFECT_API_URL}" ]; then
+            echo "PREFECT_API_URL not set; nothing to trigger."
+            echo "This workflow drives a reachable Prefect API (the cloud-readiness path)."
+            exit 0
+          fi
+          uv run python - <<'PY'
+          import os
+          from prefect.deployments import run_deployment
+
+          run_deployment(
+              name="argus-retraining/argus-retraining",
+              parameters={"reason": os.environ["REASON"]},
+              timeout=0,
+          )
+          PY

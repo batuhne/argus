@@ -2,7 +2,8 @@ COMPOSE := docker compose -f infra/docker-compose.yml
 
 .DEFAULT_GOAL := help
 .PHONY: help up down restart logs ps fmt lint type test check features train serve consume produce \
-        up-app down-app label-sim monitor monitor-report
+        up-app down-app label-sim monitor monitor-report retrain retrain-serve retrain-trigger \
+        k8s-render k8s-validate
 
 help:
 	@echo "Targets:"
@@ -26,6 +27,11 @@ help:
 	@echo "  label-sim   replay delayed ground-truth labels onto the stream"
 	@echo "  monitor     run the drift and performance exporter"
 	@echo "  monitor-report  build the Evidently drift report and log it to MLflow"
+	@echo "  retrain     run the retraining flow once (train, gate, promote)"
+	@echo "  retrain-serve   serve the scheduled retraining deployment"
+	@echo "  retrain-trigger run the drift-alerts to retraining bridge"
+	@echo "  k8s-render  render the canary overlay manifests"
+	@echo "  k8s-validate    render and schema-validate all k8s overlays"
 
 up:
 	$(COMPOSE) up -d --build --wait
@@ -85,3 +91,21 @@ monitor:
 
 monitor-report:
 	PYTHONUNBUFFERED=1 PYTHONPATH=src uv run python -m pipelines.flows.monitoring_pipeline
+
+retrain:
+	PYTHONUNBUFFERED=1 PYTHONPATH=src uv run python -m pipelines.flows.retraining_pipeline
+
+retrain-serve:
+	PYTHONUNBUFFERED=1 PYTHONPATH=src uv run python -m pipelines.deployments
+
+retrain-trigger:
+	PYTHONUNBUFFERED=1 PYTHONPATH=src uv run python -m fraud.ingestion.retrain_trigger
+
+k8s-render:
+	kubectl kustomize infra/k8s/overlays/canary
+
+k8s-validate:
+	@for d in base overlays/shadow overlays/canary; do \
+		echo "validating infra/k8s/$$d"; \
+		kubectl kustomize infra/k8s/$$d | kubeconform -ignore-missing-schemas -strict -summary; \
+	done

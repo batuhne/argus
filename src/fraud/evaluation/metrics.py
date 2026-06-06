@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
-from matplotlib.figure import Figure
 from numpy.typing import ArrayLike, NDArray
 from sklearn.metrics import average_precision_score, precision_recall_curve
+
+if TYPE_CHECKING:
+    from matplotlib.figure import Figure
 
 IntArray = NDArray[np.int8]
 FloatArray = NDArray[np.float64]
@@ -51,6 +54,8 @@ def classification_at_threshold(
 
 
 def pr_curve_figure(y_true: ArrayLike, y_score: ArrayLike, title: str = "PR curve") -> Figure:
+    from matplotlib.figure import Figure
+
     y_true_arr, y_score_arr = _coerce_pair(y_true, y_score)
     figure = Figure(figsize=(6, 5))
     axes = figure.subplots()

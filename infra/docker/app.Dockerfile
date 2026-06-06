@@ -7,13 +7,18 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
+# Patch the base image's system pip/setuptools/wheel so the scanner does not
+# flag their bundled CVEs; the app itself runs from the uv-managed .venv.
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+
 WORKDIR /app
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv \
     UV_COMPILE_BYTECODE=1 \
     PYTHONUNBUFFERED=1
 
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project
+# Only project (runtime) dependencies; the dev and pipeline groups stay out.
+RUN uv sync --frozen --no-default-groups --no-install-project
 
 COPY src ./src
 COPY params.yaml ./

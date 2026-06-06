@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
-from matplotlib.figure import Figure
 from numpy.typing import ArrayLike, NDArray
 from sklearn.calibration import calibration_curve
 from sklearn.isotonic import IsotonicRegression
 from sklearn.metrics import brier_score_loss
+
+if TYPE_CHECKING:
+    from matplotlib.figure import Figure
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +53,8 @@ def reliability_curve_figure(
     title: str = "Reliability curve",
 ) -> Figure:
     """Diagonal-anchored reliability curve for the calibrated test scores."""
+    from matplotlib.figure import Figure
+
     y_arr = np.asarray(y_true).astype(np.int8, copy=False)
     score_arr = np.asarray(y_score, dtype=np.float64)
     _require_aligned(y_arr, score_arr)

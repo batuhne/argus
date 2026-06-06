@@ -233,18 +233,12 @@ source = { editable = "." }
 dependencies = [
     { name = "bentoml" },
     { name = "confluent-kafka" },
-    { name = "dvc" },
     { name = "evidently" },
     { name = "feast", extra = ["redis"] },
-    { name = "kaggle" },
     { name = "lightgbm" },
-    { name = "matplotlib" },
     { name = "mlflow" },
     { name = "numpy" },
-    { name = "optuna" },
     { name = "pandas" },
-    { name = "pandera" },
-    { name = "prefect" },
     { name = "prometheus-client" },
     { name = "pyarrow" },
     { name = "pydantic" },
@@ -252,7 +246,6 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "pyyaml" },
     { name = "requests" },
-    { name = "shap" },
     { name = "structlog" },
     { name = "xgboost" },
 ]
@@ -268,23 +261,26 @@ dev = [
     { name = "types-pyyaml" },
     { name = "types-requests" },
 ]
+pipeline = [
+    { name = "dvc" },
+    { name = "kaggle" },
+    { name = "matplotlib" },
+    { name = "optuna" },
+    { name = "pandera" },
+    { name = "prefect" },
+    { name = "shap" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "bentoml", specifier = ">=1.4.39" },
     { name = "confluent-kafka", specifier = ">=2.14.0" },
-    { name = "dvc", specifier = ">=3.67.1" },
     { name = "evidently", specifier = ">=0.7.21" },
     { name = "feast", extras = ["redis"], specifier = ">=0.63" },
-    { name = "kaggle", specifier = ">=2.1.2" },
     { name = "lightgbm", specifier = ">=4.5" },
-    { name = "matplotlib", specifier = ">=3.9" },
     { name = "mlflow", specifier = ">=3.0" },
     { name = "numpy", specifier = ">=2.0,<3" },
-    { name = "optuna", specifier = ">=4.0" },
     { name = "pandas", specifier = ">=2.2,<3" },
-    { name = "pandera", specifier = ">=0.31.1" },
-    { name = "prefect", specifier = ">=3.0" },
     { name = "prometheus-client", specifier = ">=0.25.0" },
     { name = "pyarrow", specifier = ">=21" },
     { name = "pydantic", specifier = ">=2.6" },
@@ -292,7 +288,6 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "requests", specifier = ">=2.34.2" },
-    { name = "shap", specifier = ">=0.46" },
     { name = "structlog", specifier = ">=24.1" },
     { name = "xgboost", specifier = ">=2.1" },
 ]
@@ -307,6 +302,15 @@ dev = [
     { name = "ruff", specifier = ">=0.6" },
     { name = "types-pyyaml", specifier = ">=6.0.12.20260518" },
     { name = "types-requests", specifier = ">=2.33.0.20260518" },
+]
+pipeline = [
+    { name = "dvc", specifier = ">=3.67.1" },
+    { name = "kaggle", specifier = ">=2.1.2" },
+    { name = "matplotlib", specifier = ">=3.9" },
+    { name = "optuna", specifier = ">=4.0" },
+    { name = "pandera", specifier = ">=0.31.1" },
+    { name = "prefect", specifier = ">=3.0" },
+    { name = "shap", specifier = ">=0.46" },
 ]
 
 [[package]]

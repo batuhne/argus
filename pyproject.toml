@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "Real-time fraud detection as a production-grade ML system"
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
+# Runtime dependencies for the serving and monitoring containers only. Training
+# and data tooling live in the "pipeline" group so they stay out of the image.
 dependencies = [
     "pydantic>=2.6",
     "pydantic-settings>=2.2",
@@ -12,18 +14,11 @@ dependencies = [
     "numpy>=2.0,<3",
     "pandas>=2.2,<3",
     "pyarrow>=21",
-    "pandera>=0.31.1",
-    "dvc>=3.67.1",
-    "kaggle>=2.1.2",
     "pyyaml>=6.0.3",
     "feast[redis]>=0.63",
     "xgboost>=2.1",
     "lightgbm>=4.5",
-    "optuna>=4.0",
     "mlflow>=3.0",
-    "shap>=0.46",
-    "prefect>=3.0",
-    "matplotlib>=3.9",
     "bentoml>=1.4.39",
     "confluent-kafka>=2.14.0",
     "requests>=2.34.2",
@@ -42,6 +37,20 @@ dev = [
     "types-pyyaml>=6.0.12.20260518",
     "types-requests>=2.33.0.20260518",
 ]
+# Training and data-pipeline tooling. Installed on the host and in CI (see
+# default-groups) but excluded from the serving/monitoring image.
+pipeline = [
+    "pandera>=0.31.1",
+    "dvc>=3.67.1",
+    "kaggle>=2.1.2",
+    "optuna>=4.0",
+    "shap>=0.46",
+    "prefect>=3.0",
+    "matplotlib>=3.9",
+]
+
+[tool.uv]
+default-groups = ["dev", "pipeline"]
 
 [[tool.mypy.overrides]]
 module = ["xgboost.*", "lightgbm.*", "optuna.*", "shap.*", "matplotlib.*", "sklearn.*", "joblib.*", "evidently.*"]

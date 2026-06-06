@@ -1,0 +1,88 @@
+# Candidate running alongside the stable serving. It only receives mirrored
+# traffic, so its responses never reach a user; the rollout compares its
+# behaviour against stable before any real traffic is shifted.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: serving-shadow
+  labels:
+    app: argus-serving-shadow
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: argus-serving-shadow
+  template:
+    metadata:
+      labels:
+        app: argus-serving-shadow
+        argus.io/app: serving
+    spec:
+      serviceAccountName: argus-serving
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: serving
+          image: ghcr.io/argus/argus:candidate
+          args:
+            - bentoml
+            - serve
+            - src/fraud/serving/service.py:FraudService
+            - --host=0.0.0.0
+            - --port=3001
+          ports:
+            - name: http
+              containerPort: 3001
+          envFrom:
+            - configMapRef:
+                name: argus-serving-env
+            - secretRef:
+                name: argus-serving-secrets
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: serving-shadow
+  labels:
+    app: argus-serving-shadow
+spec:
+  selector:
+    app: argus-serving-shadow
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

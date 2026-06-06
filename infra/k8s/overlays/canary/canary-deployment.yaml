@@ -1,0 +1,87 @@
+# Candidate taking a small slice of real traffic. The rollout controller raises
+# its weight through the ramp and rolls back to zero on any SLO or quality breach.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: serving-canary
+  labels:
+    app: argus-serving-canary
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: argus-serving-canary
+  template:
+    metadata:
+      labels:
+        app: argus-serving-canary
+        argus.io/app: serving
+    spec:
+      serviceAccountName: argus-serving
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: serving
+          image: ghcr.io/argus/argus:candidate
+          args:
+            - bentoml
+            - serve
+            - src/fraud/serving/service.py:FraudService
+            - --host=0.0.0.0
+            - --port=3001
+          ports:
+            - name: http
+              containerPort: 3001
+          envFrom:
+            - configMapRef:
+                name: argus-serving-env
+            - secretRef:
+                name: argus-serving-secrets
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: serving-canary
+  labels:
+    app: argus-serving-canary
+spec:
+  selector:
+    app: argus-serving-canary
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

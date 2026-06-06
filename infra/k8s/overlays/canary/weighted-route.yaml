@@ -1,0 +1,29 @@
+# Weighted split between stable and canary. Weights shown are the first ramp
+# step (5%); the rollout controller patches them to 25 and 100 as each step
+# passes its SLO and quality gates, or back to 0 on rollback.
+apiVersion: traefik.io/v1alpha1
+kind: TraefikService
+metadata:
+  name: serving-weighted
+spec:
+  weighted:
+    services:
+      - name: serving
+        port: 80
+        weight: 95
+      - name: serving-canary
+        port: 80
+        weight: 5
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: serving
+spec:
+  entryPoints: ["web"]
+  routes:
+    - match: Host(`argus.localhost`)
+      kind: Rule
+      services:
+        - name: serving-weighted
+          kind: TraefikService

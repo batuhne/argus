@@ -1,0 +1,29 @@
+# Shadow stage: 100% of live traffic is served by stable and mirrored to the
+# candidate. Mirrored responses are discarded, so users are never affected.
+apiVersion: traefik.io/v1alpha1
+kind: TraefikService
+metadata:
+  name: serving-mirror
+spec:
+  mirroring:
+    name: serving
+    namespace: argus
+    port: 80
+    mirrors:
+      - name: serving-shadow
+        namespace: argus
+        port: 80
+        percent: 100
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: serving
+spec:
+  entryPoints: ["web"]
+  routes:
+    - match: Host(`argus.localhost`)
+      kind: Rule
+      services:
+        - name: serving-mirror
+          kind: TraefikService

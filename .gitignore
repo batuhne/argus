@@ -16,6 +16,9 @@ htmlcov/
 .venv/
 .env
 
+# Kubernetes secret material (only the .example template is committed)
+infra/k8s/**/secret.env
+
 # Data and artifacts (DVC tracks these)
 /data/
 /mlruns/

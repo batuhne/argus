@@ -1,0 +1,16 @@
+# Non-secret connection settings. Defaults target the in-cluster data plane;
+# override per environment via a kustomize overlay.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argus-serving-env
+data:
+  MLFLOW_TRACKING_URI: "http://mlflow:5000"
+  MLFLOW_S3_ENDPOINT_URL: "http://minio:9000"
+  KAFKA_BOOTSTRAP_SERVERS: "redpanda:9092"
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+  ARGUS_REDIS_CONNECTION: "redis:6379"
+  LOG_JSON: "true"
+  HOME: "/tmp"
+  BENTOML_HOME: "/tmp/bentoml"

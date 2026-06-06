@@ -1,0 +1,41 @@
+# Default-deny everything, then allow only what serving needs. The data plane
+# (Redis, Redpanda, MLflow, MinIO) is addressed by port here; in a real cluster
+# tighten the egress peers to namespace or pod selectors.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: serving-allow
+spec:
+  podSelector:
+    matchLabels:
+      argus.io/app: serving
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 3001
+  egress:
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - ports:
+        - protocol: TCP
+          port: 6379
+        - protocol: TCP
+          port: 9092
+        - protocol: TCP
+          port: 5000
+        - protocol: TCP
+          port: 9000

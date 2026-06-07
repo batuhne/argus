@@ -15,6 +15,15 @@ class SplitParams(BaseModel):
     test_fraction: float
 
 
+class SelectVParams(BaseModel):
+    max_missing_fraction: float = 0.9
+    correlation_threshold: float = 0.85
+    max_features: int = 30
+    # Spearman is computed on a seeded row sample; correlation structure stabilizes
+    # long before the full train split, and this keeps the offline stage minutes-fast.
+    corr_sample_rows: int = 100_000
+
+
 class CostMatrixParams(BaseModel):
     fn_cost_usd: float = 100.0
     fp_cost_usd: float = 5.0
@@ -63,6 +72,7 @@ class Params(BaseModel):
     seed: int
     data: DataParams
     split: SplitParams
+    select_v: SelectVParams = Field(default_factory=SelectVParams)
     evaluation: EvaluationParams = Field(default_factory=EvaluationParams)
     monitoring: MonitoringParams = Field(default_factory=MonitoringParams)
     retraining: RetrainingParams = Field(default_factory=RetrainingParams)

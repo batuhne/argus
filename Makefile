@@ -1,7 +1,7 @@
 COMPOSE := docker compose -f infra/docker-compose.yml
 
 .DEFAULT_GOAL := help
-.PHONY: help up down restart logs ps fmt lint type test check features train serve consume produce \
+.PHONY: help up down restart logs ps fmt lint type test check select-v features train serve consume produce \
         up-app down-app label-sim monitor monitor-report retrain retrain-serve retrain-trigger \
         k8s-render k8s-validate
 
@@ -17,6 +17,7 @@ help:
 	@echo "  type     type check with mypy"
 	@echo "  test     run the test suite"
 	@echo "  check    lint, type check, and test"
+	@echo "  select-v freeze the reduced V-feature set from the train split"
 	@echo "  features build offline features, then apply and materialize to Redis"
 	@echo "  train    fit XGBoost + LightGBM with Optuna sweep and log to MLflow"
 	@echo "  serve    serve the champion model over REST with BentoML"
@@ -60,6 +61,9 @@ test:
 	uv run pytest
 
 check: lint type test
+
+select-v:
+	PYTHONPATH=src uv run python -m fraud.features.select_v
 
 features:
 	PYTHONPATH=src uv run python -m fraud.features.build_offline

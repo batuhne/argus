@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
@@ -82,6 +84,17 @@ def test_amount_to_mean_ratio_is_neutral_without_history() -> None:
     ratio = fl.amount_to_mean_ratio(amount, mean)
 
     assert ratio.tolist() == [2.0, 1.0, 1.0]
+
+
+def test_load_v_selected_returns_empty_when_file_absent(tmp_path: Path) -> None:
+    assert fl.load_v_selected(tmp_path / "missing.json") == ()
+
+
+def test_load_v_selected_reads_frozen_list(tmp_path: Path) -> None:
+    path = tmp_path / "v_selected.json"
+    path.write_text('["V1", "V2"]')
+
+    assert fl.load_v_selected(path) == ("V1", "V2")
 
 
 def test_coerce_numeric_casts_to_float32_and_keeps_nan() -> None:

@@ -6,8 +6,10 @@ identical. The offline builder, the Feast views, and the stream all import this.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -39,6 +41,20 @@ D_COLUMNS = tuple(f"D{i}" for i in range(1, 16))
 DIST_COLUMNS = ("dist1", "dist2")
 ADDR_COLUMNS = ("addr1", "addr2")
 RAW_NUMERIC_PASSTHROUGH = (*C_COLUMNS, *D_COLUMNS, *DIST_COLUMNS, *ADDR_COLUMNS)
+
+# The reduced V set is frozen offline by select_v; reading it here means the same
+# list feeds training and serving. Anchored to the repo root (not the process CWD)
+# so both sides resolve the same file, and empty on a fresh checkout so imports never fail.
+V_SELECTED_PATH = Path(__file__).resolve().parents[3] / "feature_repo" / "v_selected.json"
+
+
+def load_v_selected(path: Path = V_SELECTED_PATH) -> tuple[str, ...]:
+    if not path.exists():
+        return ()
+    return tuple(json.loads(path.read_text()))
+
+
+V_SELECTED = load_v_selected()
 
 
 def to_event_timestamp(transaction_dt: pd.Series) -> pd.Series:

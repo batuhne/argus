@@ -8,6 +8,15 @@ split:
   val_fraction: 0.15
   test_fraction: 0.15
 
+select_v:
+  # drop a V column missing in more than this fraction of training rows
+  max_missing_fraction: 0.9
+  # cluster V columns whose |Spearman| meets this; keep one representative each
+  correlation_threshold: 0.85
+  max_features: 30
+  # rows sampled (seeded) for the Spearman computation
+  corr_sample_rows: 100000
+
 training:
   candidate_alias: candidate
   recall_at_k_levels: [0.005, 0.01, 0.05]

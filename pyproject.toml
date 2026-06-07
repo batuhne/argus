@@ -53,7 +53,7 @@ pipeline = [
 default-groups = ["dev", "pipeline"]
 
 [[tool.mypy.overrides]]
-module = ["xgboost.*", "lightgbm.*", "optuna.*", "shap.*", "matplotlib.*", "sklearn.*", "joblib.*", "evidently.*"]
+module = ["xgboost.*", "lightgbm.*", "optuna.*", "shap.*", "matplotlib.*", "sklearn.*", "joblib.*", "evidently.*", "pyarrow.*"]
 ignore_missing_imports = true
 
 [build-system]

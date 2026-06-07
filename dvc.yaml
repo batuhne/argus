@@ -43,6 +43,22 @@ stages:
       - data/processed/val.parquet
       - data/processed/test.parquet
 
+  select_v:
+    cmd: PYTHONPATH=src python -m fraud.features.select_v
+    deps:
+      - src/fraud/features/select_v.py
+      - src/fraud/transforms/feature_logic.py
+      - data/processed/train.parquet
+    params:
+      - seed
+      - select_v.max_missing_fraction
+      - select_v.correlation_threshold
+      - select_v.max_features
+      - select_v.corr_sample_rows
+    outs:
+      - feature_repo/v_selected.json:
+          cache: false
+
   features:
     cmd: PYTHONPATH=src python -m fraud.features.build_offline
     deps:

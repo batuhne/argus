@@ -82,7 +82,12 @@ def amount_log(amount: pd.Series) -> pd.Series:
 
 
 def amount_to_mean_ratio(amount: pd.Series, mean_amount: pd.Series) -> pd.Series:
-    # No prior history (mean of zero or missing) gives a neutral ratio of 1.
-    safe_mean = mean_amount.replace(0.0, np.nan)
-    ratio = amount.to_numpy() / safe_mean.to_numpy()
+    # No prior history gives a neutral ratio of 1: a zero mean, a missing value,
+    # or a never-seen card whose online lookup returns null. Coercing first keeps
+    # that null (Python None on an object column) from raising at serving time.
+    amt = pd.to_numeric(amount, errors="coerce").to_numpy(dtype="float64")
+    safe_mean = (
+        pd.to_numeric(mean_amount, errors="coerce").replace(0.0, np.nan).to_numpy(dtype="float64")
+    )
+    ratio = amt / safe_mean
     return pd.Series(ratio, index=amount.index, name="amt_to_card_mean_24h").fillna(1.0)

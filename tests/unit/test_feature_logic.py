@@ -82,3 +82,14 @@ def test_amount_to_mean_ratio_is_neutral_without_history() -> None:
     ratio = fl.amount_to_mean_ratio(amount, mean)
 
     assert ratio.tolist() == [2.0, 1.0, 1.0]
+
+
+def test_amount_to_mean_ratio_handles_null_mean_from_unknown_card() -> None:
+    # An unseen card has no online velocity, so Feast returns a null mean as a
+    # Python None on an object column; serving must score it, not 500.
+    amount = pd.Series([59.0])
+    mean = pd.Series([None], dtype="object")
+
+    ratio = fl.amount_to_mean_ratio(amount, mean)
+
+    assert ratio.tolist() == [1.0]

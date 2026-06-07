@@ -84,6 +84,32 @@ def test_amount_to_mean_ratio_is_neutral_without_history() -> None:
     assert ratio.tolist() == [2.0, 1.0, 1.0]
 
 
+def test_coerce_numeric_casts_to_float32_and_keeps_nan() -> None:
+    frame = pd.DataFrame({"C1": [1, 2, 3], "D1": [1.5, None, 3.5]})
+
+    out = fl.coerce_numeric(frame, ["C1", "D1"])
+
+    assert out["C1"].dtype == "float32"
+    assert out["D1"].dtype == "float32"
+    assert out["C1"].tolist() == [1.0, 2.0, 3.0]
+    assert pd.isna(out["D1"].iloc[1])
+
+
+def test_coerce_numeric_turns_unparseable_into_nan() -> None:
+    out = fl.coerce_numeric(pd.DataFrame({"C1": ["x", "2.0"]}), ["C1"])
+
+    assert pd.isna(out["C1"].iloc[0])
+    assert out["C1"].iloc[1] == 2.0
+
+
+def test_coerce_numeric_does_not_mutate_input() -> None:
+    frame = pd.DataFrame({"C1": ["x"]})
+
+    fl.coerce_numeric(frame, ["C1"])
+
+    assert frame["C1"].iloc[0] == "x"
+
+
 def test_amount_to_mean_ratio_handles_null_mean_from_unknown_card() -> None:
     # An unseen card has no online velocity, so Feast returns a null mean as a
     # Python None on an object column; serving must score it, not 500.

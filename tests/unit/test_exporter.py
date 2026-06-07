@@ -1,4 +1,5 @@
 import dataclasses
+import math
 from typing import Any
 
 import pandas as pd
@@ -114,6 +115,25 @@ def test_perf_decay_alert_emitted_when_auprc_below_floor() -> None:
     state.recompute()
 
     assert len(producer.produced) == 1
+
+
+def test_null_feature_is_recorded_as_nan_in_window() -> None:
+    producer = _FakeProducer()
+    cfg = _cfg(min_current_for_drift=1)
+    state = MonitorState(cfg, _baseline(), producer, drift_fn=_drift_clean)  # type: ignore[arg-type]
+    event = ScoredFeaturesEvent(
+        transaction_id="t-1",
+        model_version=5,
+        fraud_score=0.5,
+        decision=False,
+        features={**dict.fromkeys(FEATURE_COLUMNS, 0.5), "C1": None},
+    )
+
+    state.handle_scored_features(event)
+
+    window_row = state._features[-1]
+    assert math.isnan(window_row["C1"])
+    assert window_row["amt_log"] == 0.5
 
 
 def test_route_skips_poison_message_without_raising() -> None:

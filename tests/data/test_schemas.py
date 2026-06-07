@@ -13,6 +13,14 @@ def _valid_transactions() -> pd.DataFrame:
             "TransactionDT": [86400, 86500, 90000],
             "TransactionAmt": [50.0, 125.5, 12.0],
             "ProductCD": ["W", "C", "H"],
+            "C1": [1.0, 2.0, 3.0],
+            "C14": [0.0, 1.0, 2.0],
+            "D1": [10.0, None, 5.0],
+            "D15": [0.0, 1.0, None],
+            "dist1": [1.0, None, 2.0],
+            "dist2": [None, 1.0, 2.0],
+            "addr1": [100.0, 200.0, 300.0],
+            "addr2": [10.0, 20.0, 30.0],
             "V1": [1.0, None, 3.0],
         }
     )

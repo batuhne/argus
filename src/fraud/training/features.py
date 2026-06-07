@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from fraud.transforms import feature_logic as fl
+
 FEATURE_COLUMNS: tuple[str, ...] = (
     "card_txn_count_24h",
     "card_amt_sum_24h",
@@ -11,6 +13,7 @@ FEATURE_COLUMNS: tuple[str, ...] = (
     "amt_to_card_mean_24h",
     "amt_log",
     "TransactionAmt",
+    *fl.RAW_NUMERIC_PASSTHROUGH,
 )
 LABEL_COLUMN = "isFraud"
 

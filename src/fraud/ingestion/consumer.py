@@ -153,6 +153,7 @@ def predict_request_body(event: TransactionEvent) -> dict[str, dict[str, Any]]:
             "card_id": event.card_id,
             "amount": event.amount,
             "transaction_id": event.transaction_id,
+            "raw": event.raw.model_dump(),
         }
     }
 

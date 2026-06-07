@@ -2,22 +2,35 @@ from __future__ import annotations
 
 import signal
 import time
-from collections.abc import Iterator
+from collections.abc import Hashable, Iterator
 from pathlib import Path
 from types import FrameType
+from typing import Any
 
 import pandas as pd
 from confluent_kafka import Producer
 
 from fraud.common.logging import configure_logging, get_logger
 from fraud.config import get_settings
-from fraud.ingestion.stream import StreamConfig, TransactionEvent, seconds_per_message, serialize
+from fraud.ingestion.stream import (
+    RawAttributes,
+    StreamConfig,
+    TransactionEvent,
+    seconds_per_message,
+    serialize,
+)
 from fraud.paths import PROCESSED_DIR
 from fraud.transforms import feature_logic as fl
 
 log = get_logger(__name__)
 
-_SOURCE_COLUMNS = ["TransactionID", "TransactionDT", "TransactionAmt", *fl.IDENTITY_COLUMNS]
+_SOURCE_COLUMNS = [
+    "TransactionID",
+    "TransactionDT",
+    "TransactionAmt",
+    *fl.IDENTITY_COLUMNS,
+    *fl.RAW_NUMERIC_PASSTHROUGH,
+]
 
 
 class _ShutdownFlag:
@@ -58,14 +71,30 @@ def _load_transactions(source_path: Path) -> pd.DataFrame:
 
 
 def _iter_events(frame: pd.DataFrame) -> Iterator[TransactionEvent]:
-    columns = ["TransactionID", "card_id", "TransactionAmt", "event_timestamp"]
+    columns = [
+        "TransactionID",
+        "card_id",
+        "TransactionAmt",
+        "event_timestamp",
+        *fl.RAW_NUMERIC_PASSTHROUGH,
+    ]
     for record in frame[columns].to_dict("records"):
         yield TransactionEvent(
             transaction_id=str(record["TransactionID"]),
             card_id=str(record["card_id"]),
             amount=float(record["TransactionAmt"]),
             event_timestamp=str(record["event_timestamp"]),
+            raw=_raw_attributes(record),
         )
+
+
+def _raw_attributes(record: dict[Hashable, Any]) -> RawAttributes:
+    # NaN means the field was blank; send null so the JSON stays standard.
+    values = {
+        column: None if pd.isna(record[column]) else float(record[column])
+        for column in fl.RAW_NUMERIC_PASSTHROUGH
+    }
+    return RawAttributes(**values)
 
 
 def _publish(producer: Producer, topic: str, event: TransactionEvent) -> None:

@@ -5,6 +5,7 @@ from fraud.ingestion.stream import (
     DriftAlertEvent,
     LabelEvent,
     PredictionEvent,
+    RawAttributes,
     ScoredFeaturesEvent,
     TransactionEvent,
     deserialize_label,
@@ -13,6 +14,7 @@ from fraud.ingestion.stream import (
     seconds_per_message,
     serialize,
 )
+from fraud.transforms import feature_logic as fl
 
 
 def _transaction() -> TransactionEvent:
@@ -27,6 +29,29 @@ def _transaction() -> TransactionEvent:
 def test_transaction_event_survives_json_round_trip() -> None:
     restored = deserialize_transaction(serialize(_transaction()))
     assert restored == _transaction()
+
+
+def test_raw_attributes_fields_match_passthrough_contract() -> None:
+    assert tuple(RawAttributes.model_fields) == fl.RAW_NUMERIC_PASSTHROUGH
+
+
+def test_raw_attributes_rejects_unknown_field() -> None:
+    with pytest.raises(ValidationError):
+        RawAttributes.model_validate({"c1": 5.0})
+
+
+def test_transaction_event_carries_raw_attributes_round_trip() -> None:
+    event = TransactionEvent(
+        transaction_id="t-1",
+        card_id="1_2_3_5",
+        amount=12.5,
+        event_timestamp="2017-12-01T00:00:00+00:00",
+        raw=RawAttributes(C1=3.0, dist1=1.5),
+    )
+    restored = deserialize_transaction(serialize(event))
+    assert restored.raw.C1 == 3.0
+    assert restored.raw.dist1 == 1.5
+    assert restored.raw.C2 is None
 
 
 def test_prediction_event_serializes_to_json_bytes() -> None:
@@ -73,6 +98,19 @@ def _scored_features() -> ScoredFeaturesEvent:
 def test_scored_features_event_survives_json_round_trip() -> None:
     restored = deserialize_scored_features(serialize(_scored_features()))
     assert restored == _scored_features()
+
+
+def test_scored_features_event_round_trips_missing_feature_as_null() -> None:
+    event = ScoredFeaturesEvent(
+        transaction_id="t-1",
+        model_version=6,
+        fraud_score=0.5,
+        decision=True,
+        features={"C1": None, "TransactionAmt": 21.0},
+    )
+    restored = deserialize_scored_features(serialize(event))
+    assert restored.features["C1"] is None
+    assert restored.features["TransactionAmt"] == 21.0
 
 
 def test_scored_features_event_rejects_empty_transaction_id() -> None:

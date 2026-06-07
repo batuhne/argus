@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from fraud.common.logging import configure_logging, get_logger
 from fraud.config import get_settings
-from fraud.ingestion.stream import ScoredFeaturesEvent
+from fraud.ingestion.stream import RawAttributes, ScoredFeaturesEvent
 from fraud.serving.config import ServingConfig
 from fraud.serving.features import OnlineFeatureFetcher, redis_reachable
 from fraud.serving.inference_log import InferenceLogger
@@ -24,6 +24,7 @@ class PredictRequest(BaseModel):
     card_id: str = Field(min_length=1, max_length=128)
     amount: float = Field(gt=0.0)
     transaction_id: str | None = Field(default=None, max_length=128)
+    raw: RawAttributes = Field(default_factory=RawAttributes)
 
 
 class PredictResponse(BaseModel):
@@ -54,7 +55,7 @@ class FraudService:
     @bentoml.api  # type: ignore[untyped-decorator]
     def predict(self, request: PredictRequest) -> PredictResponse:
         start = time.perf_counter()
-        features = self._fetcher.fetch(request.card_id, request.amount)
+        features = self._fetcher.fetch(request.card_id, request.amount, request.raw)
         scored = score_transaction(self._bundle, features)
         latency_ms = (time.perf_counter() - start) * MILLISECONDS_PER_SECOND
         self._log_inference(request.transaction_id, features, scored.fraud_score, scored.decision)
@@ -85,7 +86,10 @@ class FraudService:
                 model_version=self._bundle.version,
                 fraud_score=fraud_score,
                 decision=decision,
-                features={str(name): float(value) for name, value in features.iloc[0].items()},
+                features={
+                    str(name): None if pd.isna(value) else float(value)
+                    for name, value in features.iloc[0].items()
+                },
             )
         )
 

@@ -6,6 +6,7 @@ identical. The offline builder, the Feast views, and the stream all import this.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
 import numpy as np
@@ -30,6 +31,14 @@ VELOCITY_COLUMNS = (
 
 # seconds_since_prev_txn when the card has no earlier transaction.
 NO_PRIOR_TXN = -1.0
+
+# Per-transaction C (counts), D (time deltas), distance and address fields. They
+# ride the request and reach the trees with NaN intact: missingness is signal.
+C_COLUMNS = tuple(f"C{i}" for i in range(1, 15))
+D_COLUMNS = tuple(f"D{i}" for i in range(1, 16))
+DIST_COLUMNS = ("dist1", "dist2")
+ADDR_COLUMNS = ("addr1", "addr2")
+RAW_NUMERIC_PASSTHROUGH = (*C_COLUMNS, *D_COLUMNS, *DIST_COLUMNS, *ADDR_COLUMNS)
 
 
 def to_event_timestamp(transaction_dt: pd.Series) -> pd.Series:
@@ -74,6 +83,14 @@ def compute_card_velocity(frame: pd.DataFrame) -> pd.DataFrame:
     out["card_amt_mean_24h"] = rolling.mean().fillna(0.0).to_numpy().astype("float32")
     out["card_amt_max_24h"] = rolling.max().fillna(0.0).to_numpy().astype("float32")
     out["seconds_since_prev_txn"] = gap.fillna(NO_PRIOR_TXN).to_numpy().astype("float32")
+    return out
+
+
+def coerce_numeric(frame: pd.DataFrame, columns: Sequence[str]) -> pd.DataFrame:
+    """Cast the passthrough columns to float32, keeping NaN (the trees split on it)."""
+    out = frame.copy()
+    for column in columns:
+        out[column] = pd.to_numeric(frame[column], errors="coerce").astype("float32")
     return out
 
 

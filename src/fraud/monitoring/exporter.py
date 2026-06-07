@@ -51,6 +51,10 @@ LABEL_EVENTS = Counter("argus_label_events_total", "Label events consumed")
 DRIFT_ALERTS = Counter("argus_drift_alerts_total", "Drift alerts published", ["kind"])
 
 
+def _feature_value(value: float | None) -> float:
+    return math.nan if value is None else value
+
+
 class DriftFn(Protocol):
     def __call__(
         self,
@@ -105,7 +109,10 @@ class MonitorState:
 
     def handle_scored_features(self, event: ScoredFeaturesEvent) -> None:
         self._perf.observe_score(event.transaction_id, event.fraud_score, event.decision)
-        self._features.append({name: event.features.get(name, 0.0) for name in FEATURE_COLUMNS})
+        # null is a missing feature; keep it NaN to match the baseline, not a fake zero.
+        self._features.append(
+            {name: _feature_value(event.features.get(name)) for name in FEATURE_COLUMNS}
+        )
         SCORED_EVENTS.inc()
         MODEL_VERSION.set(event.model_version)
 

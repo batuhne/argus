@@ -11,7 +11,21 @@ from fraud.paths import RAW_DIR
 from fraud.validation.schemas import IdentitySchema, TransactionSchema
 
 REPORT_PATH = Path("reports") / "validation_report.json"
-TRANSACTION_COLUMNS = ["TransactionID", "isFraud", "TransactionDT", "TransactionAmt", "ProductCD"]
+TRANSACTION_COLUMNS = [
+    "TransactionID",
+    "isFraud",
+    "TransactionDT",
+    "TransactionAmt",
+    "ProductCD",
+    "C1",
+    "C14",
+    "D1",
+    "D15",
+    "dist1",
+    "dist2",
+    "addr1",
+    "addr2",
+]
 
 # A target rate far outside this band means the wrong file or a corrupted label
 # column, not real drift. Halt rather than feed it downstream.

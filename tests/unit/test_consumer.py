@@ -64,8 +64,15 @@ def _no_backoff_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_predict_request_body_wraps_in_request_key() -> None:
-    body = predict_request_body(_event())
-    assert body == {"request": {"card_id": "1_2_3_5", "amount": 12.5, "transaction_id": "t-1"}}
+    request = predict_request_body(_event())["request"]
+    assert request["card_id"] == "1_2_3_5"
+    assert request["amount"] == 12.5
+    assert request["transaction_id"] == "t-1"
+
+
+def test_predict_request_body_forwards_raw_vector() -> None:
+    request = predict_request_body(_event())["request"]
+    assert request["raw"]["C1"] is None
 
 
 def test_prediction_from_response_maps_fields() -> None:

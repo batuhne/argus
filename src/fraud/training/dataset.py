@@ -20,7 +20,16 @@ SOURCE_COLUMNS = [
     *fl.IDENTITY_COLUMNS,
     "TransactionDT",
     "TransactionAmt",
+    *fl.RAW_NUMERIC_PASSTHROUGH,
     LABEL_COLUMN,
+]
+ENTITY_COLUMNS = [
+    "TransactionID",
+    "card_id",
+    "event_timestamp",
+    "TransactionAmt",
+    LABEL_COLUMN,
+    *fl.RAW_NUMERIC_PASSTHROUGH,
 ]
 
 log = get_logger(__name__)
@@ -29,7 +38,7 @@ log = get_logger(__name__)
 def _entity_frame(split_path: Path) -> pd.DataFrame:
     raw = pd.read_parquet(split_path, columns=SOURCE_COLUMNS)
     keyed = fl.add_keys_and_timestamp(raw)
-    return keyed[["TransactionID", "card_id", "event_timestamp", "TransactionAmt", LABEL_COLUMN]]
+    return keyed[ENTITY_COLUMNS]
 
 
 def _load_features(repo_dir: Path) -> pd.DataFrame:
@@ -50,7 +59,7 @@ def _join_split(entity_df: pd.DataFrame, features: pd.DataFrame) -> pd.DataFrame
     merged["amt_to_card_mean_24h"] = fl.amount_to_mean_ratio(
         merged["TransactionAmt"], merged["card_amt_mean_24h"]
     )
-    return merged
+    return fl.coerce_numeric(merged, fl.RAW_NUMERIC_PASSTHROUGH)
 
 
 def build_training_frame(

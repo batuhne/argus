@@ -14,6 +14,7 @@ FEATURE_COLUMNS: tuple[str, ...] = (
     "amt_log",
     "TransactionAmt",
     *fl.RAW_NUMERIC_PASSTHROUGH,
+    *fl.V_SELECTED,
 )
 LABEL_COLUMN = "isFraud"
 

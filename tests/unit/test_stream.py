@@ -32,7 +32,20 @@ def test_transaction_event_survives_json_round_trip() -> None:
 
 
 def test_raw_attributes_fields_match_passthrough_contract() -> None:
-    assert tuple(RawAttributes.model_fields) == fl.RAW_NUMERIC_PASSTHROUGH
+    numeric_fields = tuple(name for name in RawAttributes.model_fields if name != "v")
+    assert numeric_fields == fl.RAW_NUMERIC_PASSTHROUGH
+
+
+def test_transaction_event_carries_v_vector_round_trip() -> None:
+    event = TransactionEvent(
+        transaction_id="t-1",
+        card_id="1_2_3_5",
+        amount=12.5,
+        event_timestamp="2017-12-01T00:00:00+00:00",
+        raw=RawAttributes(v={"V147": 0.5, "V201": None}),
+    )
+    restored = deserialize_transaction(serialize(event))
+    assert restored.raw.v == {"V147": 0.5, "V201": None}
 
 
 def test_raw_attributes_rejects_unknown_field() -> None:

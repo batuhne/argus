@@ -76,6 +76,9 @@ class RawAttributes(BaseModel):
     dist2: float | None = None
     addr1: float | None = None
     addr2: float | None = None
+    # The reduced V set is frozen at selection time, so it rides as a dict keyed by name
+    # rather than fixed fields; serving reindexes it to feature_logic.V_SELECTED.
+    v: dict[str, float | None] = Field(default_factory=dict)
 
 
 class TransactionEvent(BaseModel):

@@ -30,6 +30,7 @@ _SOURCE_COLUMNS = [
     "TransactionAmt",
     *fl.IDENTITY_COLUMNS,
     *fl.RAW_NUMERIC_PASSTHROUGH,
+    *fl.V_SELECTED,
 ]
 
 
@@ -77,6 +78,7 @@ def _iter_events(frame: pd.DataFrame) -> Iterator[TransactionEvent]:
         "TransactionAmt",
         "event_timestamp",
         *fl.RAW_NUMERIC_PASSTHROUGH,
+        *fl.V_SELECTED,
     ]
     for record in frame[columns].to_dict("records"):
         yield TransactionEvent(
@@ -89,12 +91,14 @@ def _iter_events(frame: pd.DataFrame) -> Iterator[TransactionEvent]:
 
 
 def _raw_attributes(record: dict[Hashable, Any]) -> RawAttributes:
+    numeric = {column: _optional_float(record[column]) for column in fl.RAW_NUMERIC_PASSTHROUGH}
+    v = {column: _optional_float(record[column]) for column in fl.V_SELECTED}
+    return RawAttributes(**numeric, v=v)
+
+
+def _optional_float(value: Any) -> float | None:
     # NaN means the field was blank; send null so the JSON stays standard.
-    values = {
-        column: None if pd.isna(record[column]) else float(record[column])
-        for column in fl.RAW_NUMERIC_PASSTHROUGH
-    }
-    return RawAttributes(**values)
+    return None if pd.isna(value) else float(value)
 
 
 def _publish(producer: Producer, topic: str, event: TransactionEvent) -> None:

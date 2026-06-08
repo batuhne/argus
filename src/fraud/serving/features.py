@@ -36,9 +36,13 @@ def assemble_features(
     """Order the online row plus the request's raw numerics to the model's columns."""
     frame = online_frame.copy()
     frame["TransactionAmt"] = amount
-    raw_frame = pd.DataFrame([raw.model_dump()], index=frame.index)
-    frame = pd.concat([frame, raw_frame], axis=1)
-    frame = fl.coerce_numeric(frame, fl.RAW_NUMERIC_PASSTHROUGH)
+    payload = raw.model_dump()
+    v_values = payload.pop("v")
+    raw_frame = pd.DataFrame([payload], index=frame.index)
+    # Drop any V the request sent outside the frozen set and fill any it omitted with NaN.
+    v_frame = pd.DataFrame([v_values], index=frame.index).reindex(columns=list(fl.V_SELECTED))
+    frame = pd.concat([frame, raw_frame, v_frame], axis=1)
+    frame = fl.coerce_numeric(frame, [*fl.RAW_NUMERIC_PASSTHROUGH, *fl.V_SELECTED])
     return frame.loc[:, list(FEATURE_COLUMNS)]
 
 

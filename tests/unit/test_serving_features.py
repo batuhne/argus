@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 from fraud.ingestion.stream import RawAttributes
 from fraud.serving.features import assemble_features
@@ -52,6 +53,19 @@ def test_assemble_matches_offline_coercion_for_raw_numerics() -> None:
             offline[column].to_numpy(),
             err_msg=f"raw-numeric skew in {column}",
         )
+
+
+def test_assemble_places_v_vector_and_fills_missing() -> None:
+    selected = fl.V_SELECTED
+    assert selected, "expected a frozen V set from select_v"
+
+    assembled = assemble_features(
+        _online_row(), amount=150.0, raw=RawAttributes(v={selected[0]: 0.75})
+    )
+
+    assert assembled[selected[0]].iloc[0] == pytest.approx(0.75)
+    assert assembled[selected[0]].dtype == "float32"  # coerced like the offline path
+    assert pd.isna(assembled[selected[-1]].iloc[0])  # a frozen V the request omitted
 
 
 def test_assemble_does_not_mutate_input_frame() -> None:

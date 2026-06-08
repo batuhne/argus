@@ -21,6 +21,7 @@ SOURCE_COLUMNS = [
     "TransactionDT",
     "TransactionAmt",
     *fl.RAW_NUMERIC_PASSTHROUGH,
+    *fl.V_SELECTED,
     LABEL_COLUMN,
 ]
 ENTITY_COLUMNS = [
@@ -30,6 +31,7 @@ ENTITY_COLUMNS = [
     "TransactionAmt",
     LABEL_COLUMN,
     *fl.RAW_NUMERIC_PASSTHROUGH,
+    *fl.V_SELECTED,
 ]
 
 log = get_logger(__name__)
@@ -59,7 +61,7 @@ def _join_split(entity_df: pd.DataFrame, features: pd.DataFrame) -> pd.DataFrame
     merged["amt_to_card_mean_24h"] = fl.amount_to_mean_ratio(
         merged["TransactionAmt"], merged["card_amt_mean_24h"]
     )
-    return fl.coerce_numeric(merged, fl.RAW_NUMERIC_PASSTHROUGH)
+    return fl.coerce_numeric(merged, [*fl.RAW_NUMERIC_PASSTHROUGH, *fl.V_SELECTED])
 
 
 def build_training_frame(

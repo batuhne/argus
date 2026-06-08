@@ -31,6 +31,7 @@ _SOURCE_COLUMNS = [
     *fl.IDENTITY_COLUMNS,
     *fl.RAW_NUMERIC_PASSTHROUGH,
     *fl.V_SELECTED,
+    *fl.CATEGORICAL_COLUMNS,
 ]
 
 
@@ -79,6 +80,7 @@ def _iter_events(frame: pd.DataFrame) -> Iterator[TransactionEvent]:
         "event_timestamp",
         *fl.RAW_NUMERIC_PASSTHROUGH,
         *fl.V_SELECTED,
+        *fl.CATEGORICAL_COLUMNS,
     ]
     for record in frame[columns].to_dict("records"):
         yield TransactionEvent(
@@ -93,12 +95,18 @@ def _iter_events(frame: pd.DataFrame) -> Iterator[TransactionEvent]:
 def _raw_attributes(record: dict[Hashable, Any]) -> RawAttributes:
     numeric = {column: _optional_float(record[column]) for column in fl.RAW_NUMERIC_PASSTHROUGH}
     v = {column: _optional_float(record[column]) for column in fl.V_SELECTED}
-    return RawAttributes(**numeric, v=v)
+    categorical = {column: _optional_str(record[column]) for column in fl.CATEGORICAL_COLUMNS}
+    return RawAttributes(**numeric, v=v, categorical=categorical)
 
 
 def _optional_float(value: Any) -> float | None:
     # NaN means the field was blank; send null so the JSON stays standard.
     return None if pd.isna(value) else float(value)
+
+
+def _optional_str(value: Any) -> str | None:
+    # A blank categorical stays null; the encoder maps null to its missing-category value.
+    return None if pd.isna(value) else str(value)
 
 
 def _publish(producer: Producer, topic: str, event: TransactionEvent) -> None:

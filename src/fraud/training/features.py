@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from fraud.transforms import feature_logic as fl
+from fraud.transforms.encoders import encoded_feature_names
 
 FEATURE_COLUMNS: tuple[str, ...] = (
     "card_txn_count_24h",
@@ -15,6 +16,7 @@ FEATURE_COLUMNS: tuple[str, ...] = (
     "TransactionAmt",
     *fl.RAW_NUMERIC_PASSTHROUGH,
     *fl.V_SELECTED,
+    *encoded_feature_names(fl.CATEGORICAL_COLUMNS),
 )
 LABEL_COLUMN = "isFraud"
 

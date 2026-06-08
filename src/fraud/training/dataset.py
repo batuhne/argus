@@ -12,6 +12,7 @@ from fraud.config import get_settings
 from fraud.paths import FEATURE_REPO_DIR, PROCESSED_DIR
 from fraud.training.features import LABEL_COLUMN
 from fraud.transforms import feature_logic as fl
+from fraud.transforms.encoders import CategoricalEncoder, fit_transform_oof
 
 FEATURE_SERVICE = "card_activity"
 SPLITS: tuple[str, ...] = ("train", "val", "test")
@@ -22,6 +23,7 @@ SOURCE_COLUMNS = [
     "TransactionAmt",
     *fl.RAW_NUMERIC_PASSTHROUGH,
     *fl.V_SELECTED,
+    *fl.CATEGORICAL_COLUMNS,
     LABEL_COLUMN,
 ]
 ENTITY_COLUMNS = [
@@ -32,6 +34,7 @@ ENTITY_COLUMNS = [
     LABEL_COLUMN,
     *fl.RAW_NUMERIC_PASSTHROUGH,
     *fl.V_SELECTED,
+    *fl.CATEGORICAL_COLUMNS,
 ]
 
 log = get_logger(__name__)
@@ -96,6 +99,34 @@ def load_splits(
     del features
     gc.collect()
     return result
+
+
+def add_encoded_categoricals(
+    frames: dict[str, pd.DataFrame], *, seed: int, smoothing: float, n_splits: int
+) -> CategoricalEncoder:
+    """Fit the encoder on train and add encoded columns to every split in place.
+
+    Train rows get leak-free out-of-fold target values; val and test use the full-train
+    maps. The returned encoder holds those full-train maps, so serving encodes identically.
+    """
+    encoder, train_encoded = fit_transform_oof(
+        frames["train"],
+        fl.CATEGORICAL_COLUMNS,
+        LABEL_COLUMN,
+        seed=seed,
+        smoothing=smoothing,
+        n_splits=n_splits,
+    )
+    _attach_encoded(frames["train"], train_encoded)
+    for split, frame in frames.items():
+        if split != "train":
+            _attach_encoded(frame, encoder.transform(frame))
+    return encoder
+
+
+def _attach_encoded(frame: pd.DataFrame, encoded: pd.DataFrame) -> None:
+    for column in encoded.columns:
+        frame[column] = encoded[column]
 
 
 def main() -> None:

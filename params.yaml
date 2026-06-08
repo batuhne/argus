@@ -23,6 +23,11 @@ training:
   optuna:
     n_trials: 30
     timeout_seconds: 1800
+  encoder:
+    # pulls rare-category target means toward the global prior
+    smoothing: 20.0
+    # out-of-fold splits for leak-free target encoding on the train matrix
+    n_splits: 5
   shap:
     sample_size: 2000
 

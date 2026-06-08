@@ -19,10 +19,17 @@ from fraud.training.registry import (
     get_version_tags,
 )
 from fraud.training.train import TrainingConfig, train_with_splits
+from fraud.transforms.encoders import CategoricalEncoder
 
 pytestmark = pytest.mark.integration
 
 SyntheticSplit = Callable[[int, int], tuple[pd.DataFrame, pd.Series]]
+
+
+def _stub_encoder() -> CategoricalEncoder:
+    # The synthetic splits already carry the encoded columns as numeric features, so the
+    # gate-logic tests only need an encoder object to log, not a fitted one.
+    return CategoricalEncoder(columns=(), frequency_maps={}, target_maps={}, global_prior=0.0)
 
 
 def _config(tmp_path: pathlib.Path) -> TrainingConfig:
@@ -35,6 +42,8 @@ def _config(tmp_path: pathlib.Path) -> TrainingConfig:
         champion_alias="champion",
         optuna_n_trials=2,
         optuna_timeout=120,
+        encoder_smoothing=20.0,
+        encoder_n_splits=5,
         shap_sample_size=200,
         recall_at_k_levels=(0.05, 0.1),
         cost_matrix=CostMatrix(fn_cost_usd=100.0, fp_cost_usd=5.0),
@@ -67,7 +76,7 @@ def test_train_with_splits_bootstraps_champion_on_first_run(
     cfg = _config(tmp_path)
     splits = _make_splits(make_synthetic_split)
 
-    result = train_with_splits(cfg, splits)
+    result = train_with_splits(cfg, splits, _stub_encoder())
 
     assert result.model_version == 1
     assert result.primary.val_metrics["auprc"] > 0.7
@@ -89,7 +98,7 @@ def test_gate_blocks_promotion_when_challenger_cost_regresses(
     cfg = _config(tmp_path)
     splits = _make_splits(make_synthetic_split)
 
-    first_run = train_with_splits(cfg, splits)
+    first_run = train_with_splits(cfg, splits, _stub_encoder())
 
     fake_champion = GateMetrics(
         auprc=first_run.primary.test_metrics["auprc"] + 0.05,
@@ -106,7 +115,7 @@ def test_gate_blocks_promotion_when_challenger_cost_regresses(
         },
     )
 
-    second_run = train_with_splits(cfg, splits)
+    second_run = train_with_splits(cfg, splits, _stub_encoder())
 
     assert second_run.model_version == 2
     assert second_run.gate.decision.promote is False

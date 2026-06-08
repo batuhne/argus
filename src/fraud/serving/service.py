@@ -43,7 +43,7 @@ class FraudService:
         configure_logging(settings.log_level, settings.log_json)
         self._cfg = ServingConfig.from_settings()
         self._bundle = load_champion(self._cfg)
-        self._fetcher = OnlineFeatureFetcher(self._cfg)
+        self._fetcher = OnlineFeatureFetcher(self._cfg, self._bundle.encoder)
         self._inference_log = InferenceLogger.from_bootstrap(settings.kafka_bootstrap_servers)
         log.info(
             "model_loaded",

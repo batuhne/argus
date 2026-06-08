@@ -17,6 +17,8 @@ TRANSACTION_COLUMNS = [
     "TransactionDT",
     "TransactionAmt",
     "ProductCD",
+    "card4",
+    "card6",
     "C1",
     "C14",
     "D1",

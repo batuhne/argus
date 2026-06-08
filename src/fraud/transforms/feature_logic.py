@@ -42,6 +42,35 @@ DIST_COLUMNS = ("dist1", "dist2")
 ADDR_COLUMNS = ("addr1", "addr2")
 RAW_NUMERIC_PASSTHROUGH = (*C_COLUMNS, *D_COLUMNS, *DIST_COLUMNS, *ADDR_COLUMNS)
 
+# Per-transaction categoricals the encoder turns into frequency and smoothed-target
+# features. Curated by hand, unlike the offline-frozen V set; the fitted maps are
+# persisted with the model, so only the names live here.
+CATEGORICAL_COLUMNS = (
+    "ProductCD",
+    "card4",
+    "card6",
+    "P_emaildomain",
+    "R_emaildomain",
+    "M1",
+    "M2",
+    "M3",
+    "M4",
+    "M5",
+    "M6",
+    "M7",
+    "M8",
+    "M9",
+    "DeviceType",
+    "DeviceInfo",
+    "id_12",
+    "id_15",
+    "id_16",
+    "id_28",
+    "id_29",
+    "id_30",
+    "id_31",
+)
+
 # The reduced V set is frozen offline by select_v; reading it here means the same
 # list feeds training and serving. Anchored to the repo root (not the process CWD)
 # so both sides resolve the same file, and empty on a fresh checkout so imports never fail.

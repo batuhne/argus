@@ -14,6 +14,8 @@ class TransactionSchema(pa.DataFrameModel):
     transaction_dt: Series[int] = pa.Field(alias="TransactionDT", gt=0)
     transaction_amt: Series[float] = pa.Field(alias="TransactionAmt", gt=0)
     product_cd: Series[str] = pa.Field(alias="ProductCD", isin=PRODUCT_CODES)
+    card4: Series[str] = pa.Field(alias="card4", nullable=True)
+    card6: Series[str] = pa.Field(alias="card6", nullable=True)
     c1: Series[float] = pa.Field(alias="C1", nullable=True)
     c14: Series[float] = pa.Field(alias="C14", nullable=True)
     d1: Series[float] = pa.Field(alias="D1", nullable=True)

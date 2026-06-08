@@ -5,11 +5,20 @@ import pytest
 
 from fraud.training.features import LABEL_COLUMN
 from fraud.transforms.encoders import (
+    encoded_feature_names,
     fit_encoder,
     fit_transform_oof,
     load_encoder,
     save_encoder,
 )
+
+
+def test_encoded_feature_names_match_transform_output_order() -> None:
+    frame = pd.DataFrame({"x": ["a", "b"], "y": ["c", "d"], LABEL_COLUMN: [0, 1]})
+
+    out = fit_encoder(frame, ["x", "y"], LABEL_COLUMN).transform(frame)
+
+    assert encoded_feature_names(["x", "y"]) == tuple(out.columns)
 
 
 def test_transform_outputs_named_float32_columns() -> None:

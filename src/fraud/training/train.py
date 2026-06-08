@@ -40,7 +40,7 @@ from fraud.evaluation.threshold import (
     select_threshold,
 )
 from fraud.paths import FEATURE_REPO_DIR, PROCESSED_DIR
-from fraud.training.dataset import FEATURE_SERVICE, load_splits
+from fraud.training.dataset import FEATURE_SERVICE, add_encoded_categoricals, load_splits
 from fraud.training.features import build_xy
 from fraud.training.models import (
     BoostingHyperparams,
@@ -55,12 +55,19 @@ from fraud.training.registry import (
     CHAMPION_TAG_COST_PER_TX,
     CHAMPION_TAG_FAMILY,
     CHAMPION_TAG_THRESHOLD,
+    ENCODER_ARTIFACT_DIR,
     attach_alias,
     get_alias_version,
     get_version_tags,
     write_version_tags,
 )
 from fraud.training.tune import tune_xgb
+from fraud.transforms.encoders import (
+    DEFAULT_N_SPLITS,
+    DEFAULT_SMOOTHING,
+    CategoricalEncoder,
+    save_encoder,
+)
 
 Splits = dict[str, tuple[pd.DataFrame, pd.Series]]
 BASELINE_SAMPLE_SIZE = 50000
@@ -77,6 +84,8 @@ class TrainingConfig:
     champion_alias: str
     optuna_n_trials: int
     optuna_timeout: int | None
+    encoder_smoothing: float
+    encoder_n_splits: int
     shap_sample_size: int
     recall_at_k_levels: tuple[float, ...]
     cost_matrix: CostMatrix
@@ -95,6 +104,7 @@ class TrainingConfig:
         training_params = _load_section_params("training")
         evaluation_params = _load_section_params("evaluation")
         optuna_cfg = training_params.get("optuna") or {}
+        encoder_cfg = training_params.get("encoder") or {}
         shap_cfg = training_params.get("shap") or {}
         return cls(
             seed=settings.seed,
@@ -109,6 +119,8 @@ class TrainingConfig:
             optuna_timeout=(
                 timeout if timeout is not None else optuna_cfg.get("timeout_seconds", 1800)
             ),
+            encoder_smoothing=float(encoder_cfg.get("smoothing", DEFAULT_SMOOTHING)),
+            encoder_n_splits=int(encoder_cfg.get("n_splits", DEFAULT_N_SPLITS)),
             shap_sample_size=int(shap_cfg.get("sample_size", 2000)),
             recall_at_k_levels=tuple(
                 float(k) for k in training_params.get("recall_at_k_levels", [0.005, 0.01, 0.05])
@@ -150,17 +162,19 @@ class TrainingResult:
 
 def run_training(cfg: TrainingConfig) -> TrainingResult:
     log.info("loading_splits", repo_dir=str(cfg.repo_dir), processed_dir=str(cfg.processed_dir))
-    splits = _load_and_split(cfg)
+    splits, encoder = _load_and_split(cfg)
     log.info(
         "splits_loaded",
         train_rows=len(splits["train"][1]),
         val_rows=len(splits["val"][1]),
         test_rows=len(splits["test"][1]),
     )
-    return train_with_splits(cfg, splits)
+    return train_with_splits(cfg, splits, encoder)
 
 
-def train_with_splits(cfg: TrainingConfig, splits: Splits) -> TrainingResult:
+def train_with_splits(
+    cfg: TrainingConfig, splits: Splits, encoder: CategoricalEncoder
+) -> TrainingResult:
     _seed_everything(cfg.seed)
     _configure_mlflow(cfg)
     _log_training_start(cfg, splits)
@@ -168,7 +182,7 @@ def train_with_splits(cfg: TrainingConfig, splits: Splits) -> TrainingResult:
         _log_lineage_tags(splits)
         best = _sweep_xgb(splits, cfg)
         primary = _train_and_pick_primary(best, splits, cfg)
-        version = _log_artifacts(primary, splits, cfg)
+        version = _log_artifacts(primary, splits, cfg, encoder)
         attach_alias(cfg.model_name, version, alias=cfg.candidate_alias)
         mlflow.set_tag("model_version", str(version))
         outcome = _evaluate_and_gate(primary, splits, version, cfg)
@@ -211,9 +225,15 @@ def _configure_mlflow(cfg: TrainingConfig) -> None:
     mlflow.set_experiment(cfg.experiment_name)
 
 
-def _load_and_split(cfg: TrainingConfig) -> Splits:
+def _load_and_split(cfg: TrainingConfig) -> tuple[Splits, CategoricalEncoder]:
     frames = load_splits(cfg.repo_dir, cfg.processed_dir)
-    return {split: build_xy(frame) for split, frame in frames.items()}
+    encoder = add_encoded_categoricals(
+        frames,
+        seed=cfg.seed,
+        smoothing=cfg.encoder_smoothing,
+        n_splits=cfg.encoder_n_splits,
+    )
+    return {split: build_xy(frame) for split, frame in frames.items()}, encoder
 
 
 def _log_lineage_tags(splits: Splits) -> None:
@@ -336,7 +356,9 @@ def _log_family_metrics(result: ModelResult) -> None:
             mlflow.log_metric(f"{result.family}_{split}_{name}", value)
 
 
-def _log_artifacts(primary: ModelResult, splits: Splits, cfg: TrainingConfig) -> int:
+def _log_artifacts(
+    primary: ModelResult, splits: Splits, cfg: TrainingConfig, encoder: CategoricalEncoder
+) -> int:
     x_train, _ = splits["train"]
     x_val, y_val = splits["val"]
 
@@ -351,9 +373,17 @@ def _log_artifacts(primary: ModelResult, splits: Splits, cfg: TrainingConfig) ->
 
     mlflow.log_dict(feature_schema_payload(x_train), "feature_schema.json")
     _log_baseline_artifact(x_train, cfg.seed)
+    _log_encoder_artifact(encoder)
     return _log_and_register_model(
         primary, input_example=x_train.head(5), model_name=cfg.model_name
     )
+
+
+def _log_encoder_artifact(encoder: CategoricalEncoder) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "encoder.joblib"
+        save_encoder(encoder, path)
+        mlflow.log_artifact(str(path), artifact_path=ENCODER_ARTIFACT_DIR)
 
 
 def _log_and_register_model(

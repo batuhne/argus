@@ -19,6 +19,15 @@ DEFAULT_SMOOTHING = 20.0
 DEFAULT_N_SPLITS = 5
 
 
+def encoded_feature_names(columns: Sequence[str]) -> tuple[str, ...]:
+    """The encoded column names in the order transform emits them: freq then target per column."""
+    names: list[str] = []
+    for column in columns:
+        names.append(f"{column}{FREQ_SUFFIX}")
+        names.append(f"{column}{TARGET_SUFFIX}")
+    return tuple(names)
+
+
 @dataclass(frozen=True, slots=True)
 class CategoricalEncoder:
     """Frozen frequency and smoothed-target maps, fit on train, applied identically everywhere."""

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import joblib
@@ -14,16 +15,19 @@ from fraud.training.registry import (
     CALIBRATOR_ARTIFACT_PATH,
     CHAMPION_TAG_FAMILY,
     CHAMPION_TAG_THRESHOLD,
+    ENCODER_ARTIFACT_PATH,
     get_alias_version,
     get_version_run_id,
     get_version_tags,
 )
+from fraud.transforms.encoders import CategoricalEncoder, load_encoder
 
 
 @dataclass(frozen=True, slots=True)
 class ModelBundle:
     model: Any
     calibrator: IsotonicCalibrator
+    encoder: CategoricalEncoder
     threshold: float
     version: int
     family: str
@@ -45,7 +49,8 @@ def load_champion(cfg: ServingConfig) -> ModelBundle:
     model_uri = f"models:/{cfg.model_name}@{cfg.champion_alias}"
     model = _load_model_by_family(family, model_uri)
     calibrator = _load_calibrator(cfg.model_name, version)
-    return ModelBundle(model, calibrator, threshold, version, family)
+    encoder = _load_encoder(cfg.model_name, version)
+    return ModelBundle(model, calibrator, encoder, threshold, version, family)
 
 
 def _required_threshold(tags: dict[str, str], version: int) -> float:
@@ -73,3 +78,11 @@ def _load_calibrator(model_name: str, version: int) -> IsotonicCalibrator:
     )
     calibrator: IsotonicCalibrator = joblib.load(local_path)
     return calibrator
+
+
+def _load_encoder(model_name: str, version: int) -> CategoricalEncoder:
+    run_id = get_version_run_id(model_name, version)
+    local_path = mlflow.artifacts.download_artifacts(
+        run_id=run_id, artifact_path=ENCODER_ARTIFACT_PATH
+    )
+    return load_encoder(Path(local_path))

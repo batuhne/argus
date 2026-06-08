@@ -79,6 +79,9 @@ class RawAttributes(BaseModel):
     # The reduced V set is frozen at selection time, so it rides as a dict keyed by name
     # rather than fixed fields; serving reindexes it to feature_logic.V_SELECTED.
     v: dict[str, float | None] = Field(default_factory=dict)
+    # Curated categoricals ride the same way; serving reindexes them to CATEGORICAL_COLUMNS
+    # and the encoder turns them into features.
+    categorical: dict[str, str | None] = Field(default_factory=dict)
 
 
 class TransactionEvent(BaseModel):

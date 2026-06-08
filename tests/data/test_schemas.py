@@ -13,6 +13,8 @@ def _valid_transactions() -> pd.DataFrame:
             "TransactionDT": [86400, 86500, 90000],
             "TransactionAmt": [50.0, 125.5, 12.0],
             "ProductCD": ["W", "C", "H"],
+            "card4": ["visa", "mastercard", None],
+            "card6": ["debit", "credit", None],
             "C1": [1.0, 2.0, 3.0],
             "C14": [0.0, 1.0, 2.0],
             "D1": [10.0, None, 5.0],

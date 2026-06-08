@@ -72,8 +72,10 @@ stages:
     cmd: PYTHONPATH=src python -m fraud.training.train
     deps:
       - src/fraud/training
+      - src/fraud/transforms
       - src/fraud/evaluation
       - src/fraud/common
+      - feature_repo/v_selected.json
       - feature_repo/data/card_features.parquet
       - data/processed/train.parquet
       - data/processed/val.parquet

@@ -22,6 +22,8 @@ RUN uv sync --frozen --no-default-groups --no-install-project
 
 COPY src ./src
 COPY params.yaml ./
+# feature_logic reads the frozen V set at import; k8s has no feature_repo mount.
+COPY feature_repo/v_selected.json ./feature_repo/v_selected.json
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONPATH=/app/src

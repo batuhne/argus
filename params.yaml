@@ -21,8 +21,8 @@ training:
   candidate_alias: candidate
   recall_at_k_levels: [0.005, 0.01, 0.05]
   optuna:
-    n_trials: 30
-    timeout_seconds: 1800
+    n_trials: 50
+    timeout_seconds: 3600
   encoder:
     # pulls rare-category target means toward the global prior
     smoothing: 20.0

@@ -9,6 +9,7 @@ from typing import Any
 import joblib
 import lightgbm as lgb
 import mlflow
+import mlflow.catboost
 import mlflow.lightgbm
 import mlflow.xgboost
 import numpy as np
@@ -44,6 +45,7 @@ from fraud.training.dataset import FEATURE_SERVICE, add_encoded_categoricals, lo
 from fraud.training.features import build_xy
 from fraud.training.models import (
     BoostingHyperparams,
+    build_cat,
     build_lgb,
     build_xgb,
     compute_scale_pos_weight,
@@ -280,26 +282,29 @@ def _train_and_pick_primary(
 
 def _train_candidates(
     best: BoostingHyperparams, splits: Splits, cfg: TrainingConfig
-) -> tuple[ModelResult, ModelResult]:
+) -> tuple[ModelResult, ModelResult, ModelResult]:
     scale_pos_weight = compute_scale_pos_weight(splits["train"][1])
     return (
         _fit_and_evaluate_xgb(best, scale_pos_weight, splits, cfg),
         _fit_and_evaluate_lgb(best, scale_pos_weight, splits, cfg),
+        _fit_and_evaluate_cat(best, scale_pos_weight, splits, cfg),
     )
 
 
-def _log_candidate_metrics(
-    best: BoostingHyperparams, candidates: tuple[ModelResult, ModelResult]
-) -> None:
+def _log_candidate_metrics(best: BoostingHyperparams, candidates: tuple[ModelResult, ...]) -> None:
     mlflow.log_params({f"best_{key}": value for key, value in asdict(best).items()})
     for result in candidates:
         _log_family_metrics(result)
 
 
-def _pick_primary(xgb_result: ModelResult, lgb_result: ModelResult) -> ModelResult:
-    if xgb_result.val_metrics["auprc"] >= lgb_result.val_metrics["auprc"]:
-        return xgb_result
-    return lgb_result
+def _pick_primary(*candidates: ModelResult) -> ModelResult:
+    # Highest validation AUPRC wins; ties keep the earliest candidate, so xgboost is preferred.
+    # A degenerate NaN score sinks to -inf so it can never outrank a real candidate.
+    def val_auprc(result: ModelResult) -> float:
+        score = result.val_metrics["auprc"]
+        return score if np.isfinite(score) else float("-inf")
+
+    return max(candidates, key=val_auprc)
 
 
 def _fit_and_evaluate_xgb(
@@ -327,6 +332,17 @@ def _fit_and_evaluate_lgb(
     )
     metrics = _evaluate_on_splits(model, splits, cfg.recall_at_k_levels)
     return ModelResult("lightgbm", model, *metrics)
+
+
+def _fit_and_evaluate_cat(
+    best: BoostingHyperparams, scale_pos_weight: float, splits: Splits, cfg: TrainingConfig
+) -> ModelResult:
+    x_train, y_train = splits["train"]
+    x_val, y_val = splits["val"]
+    model = build_cat(best, scale_pos_weight=scale_pos_weight, seed=cfg.seed)
+    model.fit(x_train, y_train, eval_set=(x_val, y_val), verbose=False)
+    metrics = _evaluate_on_splits(model, splits, cfg.recall_at_k_levels)
+    return ModelResult("catboost", model, *metrics)
 
 
 def _evaluate_on_splits(
@@ -389,14 +405,22 @@ def _log_encoder_artifact(encoder: CategoricalEncoder) -> None:
 def _log_and_register_model(
     primary: ModelResult, *, input_example: pd.DataFrame, model_name: str
 ) -> int:
-    flavor = mlflow.xgboost if primary.family == "xgboost" else mlflow.lightgbm
-    info = flavor.log_model(
+    info = _model_flavor(primary.family).log_model(
         primary.model,
         name="model",
         input_example=input_example,
         registered_model_name=model_name,
     )
     return int(info.registered_model_version)
+
+
+def _model_flavor(family: str) -> Any:
+    flavors = {
+        "xgboost": mlflow.xgboost,
+        "lightgbm": mlflow.lightgbm,
+        "catboost": mlflow.catboost,
+    }
+    return flavors[family]
 
 
 def _evaluate_and_gate(

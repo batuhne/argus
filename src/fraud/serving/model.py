@@ -6,6 +6,7 @@ from typing import Any
 
 import joblib
 import mlflow
+import mlflow.catboost
 import mlflow.lightgbm
 import mlflow.xgboost
 
@@ -68,6 +69,8 @@ def _load_model_by_family(family: str, model_uri: str) -> Any:
         return mlflow.xgboost.load_model(model_uri)
     if family == "lightgbm":
         return mlflow.lightgbm.load_model(model_uri)
+    if family == "catboost":
+        return mlflow.catboost.load_model(model_uri)
     raise RuntimeError(f"unsupported champion family {family!r}")
 
 

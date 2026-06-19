@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import pandas as pd
+from catboost import CatBoostClassifier
 from lightgbm import LGBMClassifier
 from xgboost import XGBClassifier
 
@@ -19,6 +20,8 @@ class BoostingHyperparams:
     colsample_bytree: float = 0.9
     reg_alpha: float = 0.0
     reg_lambda: float = 1.0
+    # Minimum loss reduction to split. XGBoost calls it gamma; LightGBM, min_split_gain.
+    gamma: float = 0.0
     early_stopping_rounds: int = 50
 
 
@@ -44,6 +47,7 @@ def build_xgb(params: BoostingHyperparams, scale_pos_weight: float, seed: int) -
         colsample_bytree=params.colsample_bytree,
         reg_alpha=params.reg_alpha,
         reg_lambda=params.reg_lambda,
+        gamma=params.gamma,
         early_stopping_rounds=params.early_stopping_rounds,
         objective="binary:logistic",
         eval_metric="aucpr",
@@ -69,10 +73,33 @@ def build_lgb(params: BoostingHyperparams, scale_pos_weight: float, seed: int) -
         colsample_bytree=params.colsample_bytree,
         reg_alpha=params.reg_alpha,
         reg_lambda=params.reg_lambda,
+        min_split_gain=params.gamma,
         objective="binary",
         metric="average_precision",
         scale_pos_weight=scale_pos_weight,
         random_state=seed,
         n_jobs=2,
         verbose=-1,
+    )
+
+
+def build_cat(params: BoostingHyperparams, scale_pos_weight: float, seed: int) -> Any:
+    # CatBoost trains on the same encoded numeric matrix as the others, so its native
+    # categorical handling is unused and the serving contract stays single. reg_alpha,
+    # gamma, and min_child_weight have no CatBoost analogue and are dropped.
+    # allow_writing_files keeps it from littering a catboost_info dir each run.
+    return CatBoostClassifier(
+        iterations=params.n_estimators,
+        depth=params.max_depth,
+        learning_rate=params.learning_rate,
+        l2_leaf_reg=params.reg_lambda,
+        subsample=params.subsample,
+        rsm=params.colsample_bytree,
+        early_stopping_rounds=params.early_stopping_rounds,
+        eval_metric="PRAUC",
+        scale_pos_weight=scale_pos_weight,
+        random_seed=seed,
+        thread_count=2,
+        allow_writing_files=False,
+        verbose=False,
     )

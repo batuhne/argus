@@ -18,6 +18,7 @@ dependencies = [
     "feast[redis]>=0.63",
     "xgboost>=2.1",
     "lightgbm>=4.5",
+    "catboost>=1.2",
     "mlflow>=3.0",
     "bentoml>=1.4.39",
     "confluent-kafka>=2.14.0",
@@ -53,7 +54,7 @@ pipeline = [
 default-groups = ["dev", "pipeline"]
 
 [[tool.mypy.overrides]]
-module = ["xgboost.*", "lightgbm.*", "optuna.*", "shap.*", "matplotlib.*", "sklearn.*", "joblib.*", "evidently.*", "pyarrow.*"]
+module = ["xgboost.*", "lightgbm.*", "catboost.*", "optuna.*", "shap.*", "matplotlib.*", "sklearn.*", "joblib.*", "evidently.*", "pyarrow.*"]
 ignore_missing_imports = true
 
 [build-system]

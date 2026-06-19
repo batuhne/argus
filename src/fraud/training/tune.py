@@ -73,8 +73,10 @@ def _log_trial(study: Study, trial: FrozenTrial) -> None:
 
 
 def _sample_params(trial: Trial) -> BoostingHyperparams:
+    # n_estimators reaches high; early stopping on the val set trims each fit to its
+    # useful length, so the sampler spends its budget on shape, not tree count.
     return BoostingHyperparams(
-        n_estimators=trial.suggest_int("n_estimators", 200, 1000),
+        n_estimators=trial.suggest_int("n_estimators", 400, 2000),
         max_depth=trial.suggest_int("max_depth", 3, 10),
         learning_rate=trial.suggest_float("learning_rate", 0.01, 0.3, log=True),
         min_child_weight=trial.suggest_float("min_child_weight", 0.5, 10.0, log=True),
@@ -82,6 +84,7 @@ def _sample_params(trial: Trial) -> BoostingHyperparams:
         colsample_bytree=trial.suggest_float("colsample_bytree", 0.5, 1.0),
         reg_alpha=trial.suggest_float("reg_alpha", 1e-3, 10.0, log=True),
         reg_lambda=trial.suggest_float("reg_lambda", 1e-3, 10.0, log=True),
+        gamma=trial.suggest_float("gamma", 0.0, 5.0),
     )
 
 
@@ -96,4 +99,5 @@ def _params_from_trial(trial: FrozenTrial) -> BoostingHyperparams:
         colsample_bytree=float(params["colsample_bytree"]),
         reg_alpha=float(params["reg_alpha"]),
         reg_lambda=float(params["reg_lambda"]),
+        gamma=float(params["gamma"]),
     )

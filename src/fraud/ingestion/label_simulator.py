@@ -110,8 +110,9 @@ def main() -> None:
         lead_seconds=settings.stream_label_delay_seconds,
         topic=LABELS_TOPIC,
     )
+    # Trail labels for the holdout the producer replays.
     run_label_simulator(
-        cfg, PROCESSED_DIR / "test.parquet", lead_seconds=settings.stream_label_delay_seconds
+        cfg, PROCESSED_DIR / "holdout.parquet", lead_seconds=settings.stream_label_delay_seconds
     )
 
 

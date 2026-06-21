@@ -38,10 +38,12 @@ stages:
     params:
       - split.val_fraction
       - split.test_fraction
+      - split.holdout_fraction
     outs:
       - data/processed/train.parquet
       - data/processed/val.parquet
       - data/processed/test.parquet
+      - data/processed/holdout.parquet
 
   select_v:
     cmd: PYTHONPATH=src python -m fraud.features.select_v
@@ -85,4 +87,23 @@ stages:
       - evaluation
     outs:
       - artifacts/last_run.json:
+          cache: false
+
+  backtest:
+    cmd: PYTHONPATH=src python -m fraud.evaluation.backtest
+    deps:
+      - src/fraud/evaluation
+      - src/fraud/serving
+      - src/fraud/training
+      - src/fraud/transforms
+      - src/fraud/common
+      - feature_repo/v_selected.json
+      - feature_repo/data/card_features.parquet
+      - data/processed/holdout.parquet
+      # re-run after a training run may have promoted a new champion
+      - artifacts/last_run.json
+    params:
+      - evaluation
+    outs:
+      - artifacts/backtest.json:
           cache: false

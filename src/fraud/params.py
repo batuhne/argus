@@ -13,6 +13,7 @@ class DataParams(BaseModel):
 class SplitParams(BaseModel):
     val_fraction: float
     test_fraction: float
+    holdout_fraction: float
 
 
 class SelectVParams(BaseModel):
@@ -31,6 +32,7 @@ class CostMatrixParams(BaseModel):
 
 class EvaluationParams(BaseModel):
     cost_matrix: CostMatrixParams = Field(default_factory=CostMatrixParams)
+    recall_at_k_levels: tuple[float, ...] = (0.005, 0.01, 0.05)
 
 
 class MonitoringParams(BaseModel):

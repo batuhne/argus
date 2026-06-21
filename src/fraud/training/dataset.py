@@ -101,6 +101,21 @@ def load_splits(
     return result
 
 
+def build_eval_frame(
+    split: str,
+    encoder: CategoricalEncoder,
+    repo_dir: Path = FEATURE_REPO_DIR,
+    processed_dir: Path = PROCESSED_DIR,
+) -> pd.DataFrame:
+    """Build a labeled split through the shared join path and encode it with a fitted encoder.
+
+    Transform only, no refit, so no label from the evaluated rows leaks into its own features.
+    """
+    frame = build_training_frame(split, repo_dir, processed_dir)
+    _attach_encoded(frame, encoder.transform(frame))
+    return frame
+
+
 def add_encoded_categoricals(
     frames: dict[str, pd.DataFrame], *, seed: int, smoothing: float, n_splits: int
 ) -> CategoricalEncoder:

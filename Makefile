@@ -1,7 +1,7 @@
 COMPOSE := docker compose -f infra/docker-compose.yml
 
 .DEFAULT_GOAL := help
-.PHONY: help up down restart logs ps fmt lint type test check select-v features train serve consume produce \
+.PHONY: help up down restart logs ps fmt lint type test check select-v features train backtest serve consume produce \
         up-app down-app label-sim monitor monitor-report retrain retrain-serve retrain-trigger \
         k8s-render k8s-validate
 
@@ -20,6 +20,7 @@ help:
 	@echo "  select-v freeze the reduced V-feature set from the train split"
 	@echo "  features build offline features, then apply and materialize to Redis"
 	@echo "  train    fit XGBoost + LightGBM with Optuna sweep and log to MLflow"
+	@echo "  backtest score the champion on the untouched holdout split and log to MLflow"
 	@echo "  serve    serve the champion model over REST with BentoML"
 	@echo "  consume  consume transactions, score them, publish predictions"
 	@echo "  produce  replay transactions onto the stream at the configured rate"
@@ -71,6 +72,9 @@ features:
 
 train:
 	PYTHONUNBUFFERED=1 PYTHONPATH=src uv run python -m fraud.training.train
+
+backtest:
+	PYTHONUNBUFFERED=1 PYTHONPATH=src uv run python -m fraud.evaluation.backtest
 
 serve:
 	PYTHONPATH=src uv run bentoml serve src/fraud/serving/service.py:FraudService --port 3001

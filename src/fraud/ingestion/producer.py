@@ -135,7 +135,8 @@ def main() -> None:
     configure_logging(settings.log_level, settings.log_json)
     cfg = StreamConfig.from_settings()
     log.info("producer_start", rate=cfg.replay_rate_per_second, topic=cfg.transactions_topic)
-    run_producer(cfg, PROCESSED_DIR / "test.parquet")
+    # Replay the holdout so the demo and monitoring run on unseen data.
+    run_producer(cfg, PROCESSED_DIR / "holdout.parquet")
 
 
 if __name__ == "__main__":

@@ -125,7 +125,7 @@ class TrainingConfig:
             encoder_n_splits=int(encoder_cfg.get("n_splits", DEFAULT_N_SPLITS)),
             shap_sample_size=int(shap_cfg.get("sample_size", 2000)),
             recall_at_k_levels=tuple(
-                float(k) for k in training_params.get("recall_at_k_levels", [0.005, 0.01, 0.05])
+                float(k) for k in evaluation_params.get("recall_at_k_levels", [0.005, 0.01, 0.05])
             ),
             cost_matrix=_cost_matrix_from(evaluation_params),
             threshold_constraints=_threshold_constraints_from(evaluation_params),

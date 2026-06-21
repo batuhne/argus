@@ -7,6 +7,8 @@ data:
 split:
   val_fraction: 0.15
   test_fraction: 0.15
+  # latest window, never seen by tuning/threshold/gate; at 0.15 train is the remaining 0.55
+  holdout_fraction: 0.15
 
 select_v:
   # drop a V column missing in more than this fraction of training rows
@@ -19,7 +21,6 @@ select_v:
 
 training:
   candidate_alias: candidate
-  recall_at_k_levels: [0.005, 0.01, 0.05]
   optuna:
     n_trials: 50
     timeout_seconds: 3600
@@ -33,6 +34,8 @@ training:
 
 evaluation:
   champion_alias: champion
+  # top-k alert fractions for recall, shared by training and backtest
+  recall_at_k_levels: [0.005, 0.01, 0.05]
   calibration:
     method: isotonic
   cost_matrix:

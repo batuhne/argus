@@ -27,8 +27,6 @@ class Settings(BaseSettings):
     argus_model_name: str = "argus_fraud_classifier"
     kafka_bootstrap_servers: str = "localhost:19092"
     serving_predict_url: str = "http://localhost:3001/predict"
-    stream_replay_rate: float = 50.0
-    stream_label_delay_seconds: float = 5.0
     monitoring_exporter_port: int = 8000
     redis_host: str = "localhost"
     redis_port: int = 6379

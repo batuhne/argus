@@ -70,6 +70,18 @@ class CanaryParams(BaseModel):
     max_holds_per_step: int = 3
 
 
+class StreamParams(BaseModel):
+    # Dataset-seconds replayed per real second; compresses the multi-week holdout into a
+    # watchable run and divides the chargeback lag by the same factor.
+    time_warp_factor: float = Field(default=2000.0, gt=0.0)
+    # Real-world chargeback lag before a label lands, warped down by time_warp_factor.
+    base_chargeback_lag_days: float = Field(default=7.0, ge=0.0)
+    # Fractional spread on each transaction's lag; bounded below 1 to keep the lag positive.
+    label_lag_jitter: float = Field(default=0.2, ge=0.0, lt=1.0)
+    # Cap on any single inter-message wait so a long real-world gap cannot stall the replay.
+    max_message_delay_seconds: float = Field(default=2.0, ge=0.0)
+
+
 class Params(BaseModel):
     seed: int
     data: DataParams
@@ -79,6 +91,7 @@ class Params(BaseModel):
     monitoring: MonitoringParams = Field(default_factory=MonitoringParams)
     retraining: RetrainingParams = Field(default_factory=RetrainingParams)
     canary: CanaryParams = Field(default_factory=CanaryParams)
+    stream: StreamParams = Field(default_factory=StreamParams)
 
 
 def load_params(path: Path = PARAMS_FILE) -> Params:

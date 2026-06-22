@@ -1,13 +1,15 @@
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from fraud.ingestion.label_simulator import (
-    _iter_labels,
+    _label_schedule,
     _ShutdownFlag,
     run_label_simulator,
 )
 from fraud.ingestion.stream import LABELS_TOPIC, StreamConfig, deserialize_label
+from fraud.params import StreamParams
 
 
 def _cfg() -> StreamConfig:
@@ -16,13 +18,28 @@ def _cfg() -> StreamConfig:
         transactions_topic="transactions",
         predictions_topic="predictions",
         consumer_group="argus-fraud-consumer",
-        replay_rate_per_second=1000.0,
         predict_url="http://localhost:3001/predict",
     )
 
 
 def _frame() -> pd.DataFrame:
-    return pd.DataFrame({"TransactionID": [101, 102, 103], "isFraud": [0, 1, 0]})
+    return pd.DataFrame(
+        {
+            "TransactionID": [101, 102, 103],
+            "isFraud": [0, 1, 0],
+            "TransactionDT": [10, 20, 30],
+        }
+    )
+
+
+def _instant_params() -> StreamParams:
+    # max_step 0 zeroes the tempo and lag 0 means every label is due immediately.
+    return StreamParams(
+        time_warp_factor=1.0,
+        base_chargeback_lag_days=0.0,
+        label_lag_jitter=0.0,
+        max_message_delay_seconds=0.0,
+    )
 
 
 class _FakeProducer:
@@ -41,36 +58,63 @@ class _FakeProducer:
         return 0
 
 
-def test_iter_labels_maps_transaction_id_and_label() -> None:
-    events = list(_iter_labels(_frame()))
-    assert [e.transaction_id for e in events] == ["101", "102", "103"]
-    assert [e.is_fraud for e in events] == [0, 1, 0]
+def test_label_schedule_applies_tempo_and_lag_in_order() -> None:
+    frame = pd.DataFrame(
+        {"TransactionID": [1, 2, 3], "isFraud": [0, 1, 0], "TransactionDT": [100, 110, 140]}
+    )
+    params = StreamParams(
+        time_warp_factor=10.0,
+        base_chargeback_lag_days=0.0,
+        label_lag_jitter=0.0,
+        max_message_delay_seconds=100.0,
+    )
+
+    schedule = _label_schedule(frame, params, seed=0)
+
+    # Gaps 10s and 30s warped by 10 give per-message waits 1s and 3s, cumulative [0, 1, 4].
+    assert [offset for offset, _ in schedule] == pytest.approx([0.0, 1.0, 4.0])
+    assert [event.transaction_id for _, event in schedule] == ["1", "2", "3"]
+
+
+def test_label_schedule_adds_base_chargeback_lag() -> None:
+    frame = pd.DataFrame({"TransactionID": [1, 2], "isFraud": [0, 1], "TransactionDT": [0, 86400]})
+    params = StreamParams(
+        time_warp_factor=86400.0,
+        base_chargeback_lag_days=2.0,
+        label_lag_jitter=0.0,
+        max_message_delay_seconds=100.0,
+    )
+
+    schedule = _label_schedule(frame, params, seed=0)
+
+    # Tempo cumulative [0, 1]; a 2-day lag warped by 86400 is a constant 2s offset.
+    assert [offset for offset, _ in schedule] == pytest.approx([2.0, 3.0])
 
 
 def test_run_publishes_every_label_keyed_by_transaction(tmp_path: Path) -> None:
-    source = tmp_path / "test.parquet"
+    source = tmp_path / "holdout.parquet"
     _frame().to_parquet(source)
     producer = _FakeProducer()
 
     published = run_label_simulator(
         _cfg(),
         source,
-        lead_seconds=0.0,
+        stream_params=_instant_params(),
+        seed=0,
         producer=producer,  # type: ignore[arg-type]
         shutdown=_ShutdownFlag(),
     )
 
     assert published == 3
     assert producer.flushed
-    topics = {topic for topic, _, _ in producer.produced}
-    assert topics == {LABELS_TOPIC}
+    assert {topic for topic, _, _ in producer.produced} == {LABELS_TOPIC}
     _, first_key, first_value = producer.produced[0]
     assert first_key == b"101"
     assert deserialize_label(first_value).is_fraud == 0
 
 
 def test_shutdown_before_start_publishes_nothing(tmp_path: Path) -> None:
-    source = tmp_path / "test.parquet"
+    source = tmp_path / "holdout.parquet"
     _frame().to_parquet(source)
     producer = _FakeProducer()
     shutdown = _ShutdownFlag()
@@ -79,7 +123,8 @@ def test_shutdown_before_start_publishes_nothing(tmp_path: Path) -> None:
     published = run_label_simulator(
         _cfg(),
         source,
-        lead_seconds=10.0,
+        stream_params=_instant_params(),
+        seed=0,
         producer=producer,  # type: ignore[arg-type]
         shutdown=shutdown,
     )

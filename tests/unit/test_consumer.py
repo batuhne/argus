@@ -19,7 +19,6 @@ def _cfg() -> StreamConfig:
         transactions_topic="transactions",
         predictions_topic="predictions",
         consumer_group="argus-fraud-consumer",
-        replay_rate_per_second=50.0,
         predict_url="http://localhost:3000/predict",
     )
 

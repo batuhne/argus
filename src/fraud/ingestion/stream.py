@@ -2,9 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
+import pandas as pd
+from numpy.typing import NDArray
 from pydantic import BaseModel, ConfigDict, Field
 
 from fraud.config import get_settings
+
+SECONDS_PER_DAY = 86400.0
 
 TRANSACTIONS_TOPIC = "transactions"
 PREDICTIONS_TOPIC = "predictions"
@@ -22,7 +27,6 @@ class StreamConfig:
     transactions_topic: str
     predictions_topic: str
     consumer_group: str
-    replay_rate_per_second: float
     predict_url: str
 
     @classmethod
@@ -33,7 +37,6 @@ class StreamConfig:
             transactions_topic=TRANSACTIONS_TOPIC,
             predictions_topic=PREDICTIONS_TOPIC,
             consumer_group=CONSUMER_GROUP,
-            replay_rate_per_second=settings.stream_replay_rate,
             predict_url=settings.serving_predict_url,
         )
 
@@ -148,8 +151,14 @@ def deserialize_drift_alert(payload: bytes) -> DriftAlertEvent:
     return DriftAlertEvent.model_validate_json(payload)
 
 
-def seconds_per_message(rate_per_second: float) -> float:
-    """Inter-message delay that paces the replay to the target throughput."""
-    if rate_per_second <= 0.0:
-        raise ValueError(f"replay rate must be positive, got {rate_per_second}")
-    return 1.0 / rate_per_second
+def replay_step_delays(
+    transaction_dt: pd.Series, *, time_warp_factor: float, max_step_seconds: float
+) -> NDArray[np.float64]:
+    """Wall-clock wait before each message: ascending TransactionDT gaps compressed by the warp.
+
+    First wait is 0; gaps are capped so a long real-world lull cannot stall the replay.
+    """
+    if time_warp_factor <= 0.0:
+        raise ValueError(f"time_warp_factor must be positive, got {time_warp_factor}")
+    steps = (transaction_dt.diff().fillna(0.0) / time_warp_factor).clip(0.0, max_step_seconds)
+    return np.asarray(steps.to_numpy(), dtype=np.float64)

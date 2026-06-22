@@ -74,6 +74,12 @@ def _drift_clean(
     return FeatureDrift(psi={"amt_log": 0.01}, psi_threshold=psi_threshold)
 
 
+def _drift_raises(
+    _ref: pd.DataFrame, _cur: pd.DataFrame, _cols: Any, *, psi_threshold: float
+) -> FeatureDrift:
+    raise ValueError("An empty column 'C1' was provided for drift calculation")
+
+
 def test_data_drift_alert_emitted_only_after_debounce() -> None:
     producer = _FakeProducer()
     cfg = _cfg(drift_debounce_cycles=2, min_current_for_drift=1)
@@ -96,6 +102,18 @@ def test_clean_distribution_emits_no_alert() -> None:
     state.handle_scored_features(_scored("t-1"))
     state.recompute()
     state.recompute()
+    assert producer.produced == []
+
+
+def test_recompute_survives_drift_failure() -> None:
+    producer = _FakeProducer()
+    cfg = _cfg(drift_debounce_cycles=1, min_current_for_drift=1)
+    state = MonitorState(cfg, _baseline(), producer, drift_fn=_drift_raises)  # type: ignore[arg-type]
+    state.handle_scored_features(_scored("t-1"))
+
+    # A degenerate window makes drift raise; recompute must not crash the monitor.
+    state.recompute()
+
     assert producer.produced == []
 
 

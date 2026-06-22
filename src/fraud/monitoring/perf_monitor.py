@@ -11,7 +11,9 @@ from fraud.evaluation.business import CostMatrix
 from fraud.evaluation.metrics import auprc
 
 DEFAULT_WINDOW_SIZE = 5000
-DEFAULT_JOIN_RETENTION = 20000
+# Must exceed predictions in flight before their labels arrive (arrival_rate * max_lag); the
+# holdout replay peaks near 20k. Too small evicts a pending score before its label lands.
+DEFAULT_JOIN_RETENTION = 30000
 
 _K = TypeVar("_K")
 _V = TypeVar("_V")

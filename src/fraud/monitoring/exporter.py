@@ -129,9 +129,15 @@ class MonitorState:
         if len(self._features) < self.cfg.min_current_for_drift:
             return None
         current = pd.DataFrame(list(self._features), columns=list(FEATURE_COLUMNS))
-        return self.drift_fn(
-            self.baseline, current, FEATURE_COLUMNS, psi_threshold=self.cfg.psi_threshold
-        )
+        try:
+            return self.drift_fn(
+                self.baseline, current, FEATURE_COLUMNS, psi_threshold=self.cfg.psi_threshold
+            )
+        except ValueError as exc:
+            # A degenerate window (e.g. an all-null feature) must not crash the monitor; skip
+            # this drift cycle. Rolling AUPRC and cost still update.
+            log.warning("drift_computation_skipped", error=str(exc))
+            return None
 
     def _update_metrics(self, drift: FeatureDrift | None) -> list[DriftAlertEvent]:
         auprc = self._perf.rolling_auprc()

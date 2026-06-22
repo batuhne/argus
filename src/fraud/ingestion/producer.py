@@ -16,9 +16,10 @@ from fraud.ingestion.stream import (
     RawAttributes,
     StreamConfig,
     TransactionEvent,
-    seconds_per_message,
+    replay_step_delays,
     serialize,
 )
+from fraud.params import StreamParams, load_params
 from fraud.paths import PROCESSED_DIR
 from fraud.transforms import feature_logic as fl
 
@@ -43,22 +44,27 @@ class _ShutdownFlag:
         self.requested = True
 
 
-def run_producer(cfg: StreamConfig, source_path: Path) -> int:
-    """Replay transactions from the parquet to the topic at the configured rate."""
+def run_producer(cfg: StreamConfig, source_path: Path, *, stream_params: StreamParams) -> int:
+    """Replay transactions to the topic at the real per-transaction tempo (time-warped)."""
     frame = _load_transactions(source_path)
     producer = Producer({"bootstrap.servers": cfg.bootstrap_servers})
-    delay = seconds_per_message(cfg.replay_rate_per_second)
+    delays = replay_step_delays(
+        frame["TransactionDT"],
+        time_warp_factor=stream_params.time_warp_factor,
+        max_step_seconds=stream_params.max_message_delay_seconds,
+    )
     shutdown = _install_shutdown_handler()
 
     published = 0
     try:
-        for event in _iter_events(frame):
+        for delay, event in zip(delays, _iter_events(frame), strict=True):
             if shutdown.requested:
                 break
+            if delay > 0.0:
+                time.sleep(float(delay))
             _publish(producer, cfg.transactions_topic, event)
             producer.poll(0)
             published += 1
-            time.sleep(delay)
     finally:
         producer.flush()
     log.info("replay_complete", published=published, topic=cfg.transactions_topic)
@@ -67,6 +73,8 @@ def run_producer(cfg: StreamConfig, source_path: Path) -> int:
 
 def _load_transactions(source_path: Path) -> pd.DataFrame:
     raw = pd.read_parquet(source_path, columns=_SOURCE_COLUMNS)
+    # Tempo needs ascending TransactionDT; sort here rather than trust the file's order.
+    raw = raw.sort_values("TransactionDT").reset_index(drop=True)
     keyed = fl.add_keys_and_timestamp(raw)
     keyed["event_timestamp"] = keyed["event_timestamp"].map(lambda ts: ts.isoformat())
     return keyed
@@ -134,9 +142,10 @@ def main() -> None:
     settings = get_settings()
     configure_logging(settings.log_level, settings.log_json)
     cfg = StreamConfig.from_settings()
-    log.info("producer_start", rate=cfg.replay_rate_per_second, topic=cfg.transactions_topic)
+    stream_params = load_params().stream
+    log.info("producer_start", warp=stream_params.time_warp_factor, topic=cfg.transactions_topic)
     # Replay the holdout so the demo and monitoring run on unseen data.
-    run_producer(cfg, PROCESSED_DIR / "holdout.parquet")
+    run_producer(cfg, PROCESSED_DIR / "holdout.parquet", stream_params=stream_params)
 
 
 if __name__ == "__main__":

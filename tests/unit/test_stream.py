@@ -1,3 +1,4 @@
+import pandas as pd
 import pytest
 from pydantic import ValidationError
 
@@ -11,7 +12,7 @@ from fraud.ingestion.stream import (
     deserialize_label,
     deserialize_scored_features,
     deserialize_transaction,
-    seconds_per_message,
+    replay_step_delays,
     serialize,
 )
 from fraud.transforms import feature_logic as fl
@@ -168,11 +169,20 @@ def test_drift_alert_event_serializes() -> None:
     assert serialize(event).startswith(b"{")
 
 
-def test_seconds_per_message_inverts_rate() -> None:
-    assert seconds_per_message(50.0) == pytest.approx(0.02)
+def test_replay_step_delays_warps_real_gaps_with_zero_first_wait() -> None:
+    dt = pd.Series([100, 110, 140])
+    delays = replay_step_delays(dt, time_warp_factor=10.0, max_step_seconds=100.0)
+    # First message has no predecessor; gaps 10s and 30s warped by 10 give 1s and 3s.
+    assert delays.tolist() == pytest.approx([0.0, 1.0, 3.0])
 
 
-@pytest.mark.parametrize("rate", [0.0, -5.0])
-def test_seconds_per_message_rejects_non_positive_rate(rate: float) -> None:
-    with pytest.raises(ValueError, match="positive"):
-        seconds_per_message(rate)
+def test_replay_step_delays_caps_long_gaps() -> None:
+    dt = pd.Series([0, 10, 1_000_000])
+    delays = replay_step_delays(dt, time_warp_factor=1.0, max_step_seconds=5.0)
+    assert delays.tolist() == pytest.approx([0.0, 5.0, 5.0])
+
+
+@pytest.mark.parametrize("warp", [0.0, -1.0])
+def test_replay_step_delays_rejects_non_positive_warp(warp: float) -> None:
+    with pytest.raises(ValueError, match="time_warp_factor must be positive"):
+        replay_step_delays(pd.Series([0, 1]), time_warp_factor=warp, max_step_seconds=1.0)

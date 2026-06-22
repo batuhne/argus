@@ -25,7 +25,8 @@ class Settings(BaseSettings):
     mlflow_tracking_uri: str = "http://localhost:5500"
     mlflow_experiment_name: str = "argus"
     argus_model_name: str = "argus_fraud_classifier"
-    kafka_bootstrap_servers: str = "localhost:19092"
+    # All three broker ports, so a host client still connects when one broker is down.
+    kafka_bootstrap_servers: str = "localhost:19092,localhost:29092,localhost:39092"
     serving_predict_url: str = "http://localhost:3001/predict"
     monitoring_exporter_port: int = 8000
     redis_host: str = "localhost"

@@ -16,6 +16,7 @@ from fraud.ingestion.stream import (
     StreamConfig,
     TransactionEvent,
     deserialize_transaction,
+    durable_producer_config,
     serialize,
 )
 
@@ -42,7 +43,7 @@ def run_consumer(cfg: StreamConfig, shutdown: _ShutdownFlag | None = None) -> No
     """Consume transactions, score each via the serving API, publish predictions."""
     shutdown = shutdown or _install_shutdown_handler()
     consumer = _build_consumer(cfg)
-    producer = Producer({"bootstrap.servers": cfg.bootstrap_servers})
+    producer = Producer(durable_producer_config(cfg.bootstrap_servers))
     session = requests.Session()
     consumer.subscribe([cfg.transactions_topic])
     log.info("consumer_start", topic=cfg.transactions_topic, predict_url=cfg.predict_url)

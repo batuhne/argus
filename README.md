@@ -88,4 +88,24 @@ Tunable knobs live under `training:` in `params.yaml` (Optuna trial budget and
 timeout, SHAP sample size, recall@k levels, alias name). The MLflow tracking
 server is at `http://localhost:5500` while the stack is up.
 
+## Streaming and high availability
+
+The transaction stream runs on Redpanda. `make up` starts a three-broker cluster and
+`make up-app` creates every topic at replication factor 3. Producers write with `acks=all`,
+so a write needs a majority of its three replicas before it is acked, and one broker can
+fail without losing or refusing writes. `redpanda-0` is the seed and the only broker
+published for host access, so it stays a cold-start single point of failure on the demo.
+`make up-single` drops to one broker when a full cluster is too heavy, as on a laptop or CI.
+
+Transactions are keyed by `card_id`, so a card's events stay on one partition and in order.
+The consumer scales out: replicas in one group split the partitions. Redelivery is safe
+because the monitor's score-to-label join is idempotent. The one exception to durability is
+serving's inference log (the `scored-features` stream), which is best-effort and drops a
+record rather than block a prediction, so its writes are outside the no-loss guarantee.
+
+The monitor is a single replica because its join and PSI windows are in memory; scaling it
+needs that state in a shared store first. Serving is stateless and scales out, as the
+Kubernetes overlays show with a replica set and an autoscaler. Redis is single-node here;
+production would front it with Sentinel or Cluster, a deployment change rather than a code one.
+
 More to come (quickstart, demo script, screenshots).

@@ -1,13 +1,16 @@
-COMPOSE := docker compose -f infra/docker-compose.yml
+# Default to the multi-broker cluster (base + overlay). COMPOSE_SINGLE is the base alone.
+COMPOSE := docker compose -f infra/docker-compose.yml -f infra/docker-compose.multi.yml
+COMPOSE_SINGLE := docker compose -f infra/docker-compose.yml
 
 .DEFAULT_GOAL := help
-.PHONY: help up down restart logs ps fmt lint type test check select-v features train backtest serve consume produce \
+.PHONY: help up up-single down restart logs ps fmt lint type test check select-v features train backtest serve consume produce \
         up-app down-app label-sim monitor monitor-report retrain retrain-serve retrain-trigger \
         k8s-render k8s-validate
 
 help:
 	@echo "Targets:"
-	@echo "  up       build and start the local stack, wait until healthy"
+	@echo "  up       build and start the stack (3-broker cluster), wait until healthy"
+	@echo "  up-single  single-broker stack (lighter, for a laptop or CI)"
 	@echo "  down     stop the stack and remove containers"
 	@echo "  restart  down then up"
 	@echo "  logs     follow logs for all services"
@@ -37,6 +40,9 @@ help:
 
 up:
 	$(COMPOSE) up -d --build --wait
+
+up-single:
+	$(COMPOSE_SINGLE) up -d --build --wait
 
 down:
 	$(COMPOSE) down

@@ -12,6 +12,7 @@ from fraud.ingestion.stream import (
     deserialize_label,
     deserialize_scored_features,
     deserialize_transaction,
+    durable_producer_config,
     replay_step_delays,
     serialize,
 )
@@ -186,3 +187,10 @@ def test_replay_step_delays_caps_long_gaps() -> None:
 def test_replay_step_delays_rejects_non_positive_warp(warp: float) -> None:
     with pytest.raises(ValueError, match="time_warp_factor must be positive"):
         replay_step_delays(pd.Series([0, 1]), time_warp_factor=warp, max_step_seconds=1.0)
+
+
+def test_durable_producer_config_enables_idempotence() -> None:
+    cfg = durable_producer_config("redpanda-0:9092,redpanda-1:9092")
+    assert cfg["bootstrap.servers"] == "redpanda-0:9092,redpanda-1:9092"
+    # The flag that buys durability and retry dedup.
+    assert cfg["enable.idempotence"] == "true"

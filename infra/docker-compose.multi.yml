@@ -1,0 +1,90 @@
+# Multi-broker overlay for "make up": adds two brokers and creates new topics at RF=3, so a
+# write survives one broker loss. It only adds and overrides, so the base stays single-broker
+# for "make up-single". Reusing a single-broker volume keeps the old RF=1 topics, so init
+# fails on the mismatch; run "make down -v" for a clean RF=3 start.
+
+networks:
+  argus:
+    name: argus
+
+volumes:
+  redpanda-1-data:
+  redpanda-2-data:
+
+services:
+  redpanda-1:
+    restart: unless-stopped
+    image: docker.redpanda.com/redpandadata/redpanda:v24.3.1
+    networks: [argus]
+    command:
+      - redpanda
+      - start
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:29092
+      - --advertise-kafka-addr=internal://redpanda-1:9092,external://localhost:29092
+      - --rpc-addr=redpanda-1:33145
+      - --advertise-rpc-addr=redpanda-1:33145
+      - --seeds=redpanda-0:33145
+      - --mode=dev-container
+      - --smp=1
+      - --default-log-level=info
+    ports:
+      - "29092:29092"
+      - "29644:9644"
+    volumes:
+      - redpanda-1-data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -qE 'Healthy:.*true'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  redpanda-2:
+    restart: unless-stopped
+    image: docker.redpanda.com/redpandadata/redpanda:v24.3.1
+    networks: [argus]
+    command:
+      - redpanda
+      - start
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:39092
+      - --advertise-kafka-addr=internal://redpanda-2:9092,external://localhost:39092
+      - --rpc-addr=redpanda-2:33145
+      - --advertise-rpc-addr=redpanda-2:33145
+      - --seeds=redpanda-0:33145
+      - --mode=dev-container
+      - --smp=1
+      - --default-log-level=info
+    ports:
+      - "39092:39092"
+      - "39644:9644"
+    volumes:
+      - redpanda-2-data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -qE 'Healthy:.*true'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  # Wait for all three brokers and create topics at RF=3.
+  redpanda-init:
+    depends_on:
+      redpanda-1:
+        condition: service_healthy
+      redpanda-2:
+        condition: service_healthy
+    environment:
+      REDPANDA_BROKERS: redpanda-0:9092,redpanda-1:9092,redpanda-2:9092
+      REDPANDA_RF: "3"
+
+  serving:
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: redpanda-0:9092,redpanda-1:9092,redpanda-2:9092
+
+  monitoring:
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: redpanda-0:9092,redpanda-1:9092,redpanda-2:9092
+
+  consumer:
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: redpanda-0:9092,redpanda-1:9092,redpanda-2:9092

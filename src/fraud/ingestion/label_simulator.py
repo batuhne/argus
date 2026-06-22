@@ -18,6 +18,7 @@ from fraud.ingestion.stream import (
     SECONDS_PER_DAY,
     LabelEvent,
     StreamConfig,
+    durable_producer_config,
     replay_step_delays,
     serialize,
 )
@@ -50,7 +51,7 @@ def run_label_simulator(
 ) -> int:
     """Emit each transaction's true label after its time-warped chargeback lag."""
     frame = _load_labels(source_path)
-    producer = producer or Producer({"bootstrap.servers": cfg.bootstrap_servers})
+    producer = producer or Producer(durable_producer_config(cfg.bootstrap_servers))
     shutdown = shutdown or _install_shutdown_handler()
     schedule = _label_schedule(frame, stream_params, seed)
 

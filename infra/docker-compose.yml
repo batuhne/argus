@@ -3,6 +3,9 @@ name: argus
 # Local infrastructure stack. Every service is arm64 compatible and exposes a
 # healthcheck so "make up" can block until the stack is actually ready. Image
 # tags are pinned for reproducibility.
+#
+# Single Redpanda broker (RF=1), enough for a laptop or CI. docker-compose.multi.yml adds
+# two more brokers at RF=3; "make up" applies both, "make up-single" uses this file alone.
 
 x-restart: &restart
   restart: unless-stopped
@@ -14,7 +17,7 @@ networks:
 volumes:
   postgres-data:
   redis-data:
-  redpanda-data:
+  redpanda-0-data:
   minio-data:
   prometheus-data:
   grafana-data:
@@ -54,7 +57,7 @@ services:
       timeout: 3s
       retries: 10
 
-  redpanda:
+  redpanda-0:
     <<: *restart
     image: docker.redpanda.com/redpandadata/redpanda:v24.3.1
     networks: [argus]
@@ -62,12 +65,12 @@ services:
       - redpanda
       - start
       - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
-      - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
+      - --advertise-kafka-addr=internal://redpanda-0:9092,external://localhost:19092
       - --pandaproxy-addr=internal://0.0.0.0:8082,external://0.0.0.0:18082
-      - --advertise-pandaproxy-addr=internal://redpanda:8082,external://localhost:18082
+      - --advertise-pandaproxy-addr=internal://redpanda-0:8082,external://localhost:18082
       - --schema-registry-addr=internal://0.0.0.0:8081,external://0.0.0.0:18081
-      - --rpc-addr=redpanda:33145
-      - --advertise-rpc-addr=redpanda:33145
+      - --rpc-addr=redpanda-0:33145
+      - --advertise-rpc-addr=redpanda-0:33145
       - --mode=dev-container
       - --smp=1
       - --default-log-level=info
@@ -77,13 +80,47 @@ services:
       - "19092:19092"
       - "19644:9644"
     volumes:
-      - redpanda-data:/var/lib/redpanda/data
+      - redpanda-0-data:/var/lib/redpanda/data
     healthcheck:
       test: ["CMD-SHELL", "rpk cluster health | grep -qE 'Healthy:.*true'"]
       interval: 10s
       timeout: 5s
       retries: 12
       start_period: 20s
+
+  # Creates the topics up front so clients don't auto-create them at RF=1. RF and partitions
+  # come from the env; the overlay raises RF to 3. Fails loudly if a topic already exists at
+  # the wrong RF, the trap when single- and multi-broker runs share volumes.
+  redpanda-init:
+    profiles: ["app"]
+    image: docker.redpanda.com/redpandadata/redpanda:v24.3.1
+    networks: [argus]
+    depends_on:
+      redpanda-0:
+        condition: service_healthy
+    environment:
+      REDPANDA_BROKERS: redpanda-0:9092
+      REDPANDA_RF: "1"
+      REDPANDA_PARTITIONS: "6"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        existing="$$(rpk topic list -X brokers="$$REDPANDA_BROKERS" 2>/dev/null | tail -n +2)"
+        for t in transactions predictions scored-features labels drift-alerts; do
+          rf="$$(echo "$$existing" | awk -v t="$$t" '$$1==t {print $$3}')"
+          if [ -n "$$rf" ]; then
+            if [ "$$rf" != "$$REDPANDA_RF" ]; then
+              echo "topic $$t exists at RF $$rf, expected $$REDPANDA_RF; run 'make down -v' to reset" >&2
+              exit 1
+            fi
+            echo "topic $$t exists at RF $$REDPANDA_RF"
+          else
+            rpk topic create "$$t" -X brokers="$$REDPANDA_BROKERS" -r "$$REDPANDA_RF" -p "$$REDPANDA_PARTITIONS"
+          fi
+        done
+    restart: "no"
 
   minio:
     <<: *restart
@@ -226,15 +263,15 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      redpanda:
-        condition: service_healthy
+      redpanda-init:
+        condition: service_completed_successfully
     environment:
       MLFLOW_TRACKING_URI: http://mlflow:5000
       MLFLOW_S3_ENDPOINT_URL: http://minio:9000
       AWS_ACCESS_KEY_ID: minioadmin
       AWS_SECRET_ACCESS_KEY: minioadmin
       AWS_DEFAULT_REGION: us-east-1
-      KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+      KAFKA_BOOTSTRAP_SERVERS: redpanda-0:9092
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       ARGUS_REDIS_CONNECTION: redis:6379
@@ -255,6 +292,8 @@ services:
       retries: 12
       start_period: 40s
 
+  # Single replica: the join and PSI windows are in memory, so a second instance would split
+  # them across partitions. Scaling it needs that state in a shared store first.
   monitoring:
     <<: *restart
     profiles: ["app"]
@@ -265,15 +304,15 @@ services:
     depends_on:
       mlflow:
         condition: service_healthy
-      redpanda:
-        condition: service_healthy
+      redpanda-init:
+        condition: service_completed_successfully
     environment:
       MLFLOW_TRACKING_URI: http://mlflow:5000
       MLFLOW_S3_ENDPOINT_URL: http://minio:9000
       AWS_ACCESS_KEY_ID: minioadmin
       AWS_SECRET_ACCESS_KEY: minioadmin
       AWS_DEFAULT_REGION: us-east-1
-      KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+      KAFKA_BOOTSTRAP_SERVERS: redpanda-0:9092
     command: ["python", "-m", "fraud.monitoring.exporter"]
     ports:
       - "8000:8000"
@@ -283,3 +322,24 @@ services:
       timeout: 5s
       retries: 12
       start_period: 30s
+
+  # Scales out: replicas in the group split the partitions, and card_id keying keeps a card's
+  # events on one partition and in order. Reaches serving by name, which round-robins replicas.
+  consumer:
+    <<: *restart
+    profiles: ["app"]
+    build:
+      context: ..
+      dockerfile: infra/docker/app.Dockerfile
+    networks: [argus]
+    deploy:
+      replicas: 3
+    depends_on:
+      serving:
+        condition: service_healthy
+      redpanda-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: redpanda-0:9092
+      SERVING_PREDICT_URL: http://serving:3001/predict
+    command: ["python", "-m", "fraud.ingestion.consumer"]

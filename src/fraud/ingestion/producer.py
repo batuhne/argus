@@ -16,6 +16,7 @@ from fraud.ingestion.stream import (
     RawAttributes,
     StreamConfig,
     TransactionEvent,
+    durable_producer_config,
     replay_step_delays,
     serialize,
 )
@@ -47,7 +48,7 @@ class _ShutdownFlag:
 def run_producer(cfg: StreamConfig, source_path: Path, *, stream_params: StreamParams) -> int:
     """Replay transactions to the topic at the real per-transaction tempo (time-warped)."""
     frame = _load_transactions(source_path)
-    producer = Producer({"bootstrap.servers": cfg.bootstrap_servers})
+    producer = Producer(durable_producer_config(cfg.bootstrap_servers))
     delays = replay_step_delays(
         frame["TransactionDT"],
         time_warp_factor=stream_params.time_warp_factor,

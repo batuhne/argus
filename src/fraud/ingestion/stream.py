@@ -131,6 +131,12 @@ class DriftAlertEvent(BaseModel):
     detected_at: str
 
 
+def durable_producer_config(bootstrap_servers: str) -> dict[str, str]:
+    """Idempotent acks=all producer: a write survives one broker loss and retries do not
+    duplicate. Not for serving's best-effort inference log."""
+    return {"bootstrap.servers": bootstrap_servers, "enable.idempotence": "true"}
+
+
 def serialize(event: BaseModel) -> bytes:
     return event.model_dump_json().encode("utf-8")
 

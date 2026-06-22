@@ -23,6 +23,7 @@ from fraud.ingestion.stream import (
     ScoredFeaturesEvent,
     deserialize_label,
     deserialize_scored_features,
+    durable_producer_config,
     serialize,
 )
 from fraud.monitoring.baseline import load_baseline
@@ -225,7 +226,7 @@ def run_exporter(cfg: MonitoringConfig, shutdown: _ShutdownFlag | None = None) -
     """Consume scored-features and labels, expose ML health metrics, alert on drift."""
     shutdown = shutdown or _install_shutdown_handler()
     state = MonitorState(
-        cfg, load_baseline(cfg), Producer({"bootstrap.servers": cfg.bootstrap_servers})
+        cfg, load_baseline(cfg), Producer(durable_producer_config(cfg.bootstrap_servers))
     )
     consumer = _build_consumer(cfg)
     consumer.subscribe([cfg.scored_features_topic, cfg.labels_topic])

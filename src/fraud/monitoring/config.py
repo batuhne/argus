@@ -26,6 +26,7 @@ class MonitoringConfig:
     champion_alias: str
     cost_matrix: CostMatrix
     psi_threshold: float
+    psi_top_n: int
     auprc_floor: float
     drift_debounce_cycles: int
     window_size: int
@@ -52,6 +53,7 @@ class MonitoringConfig:
             champion_alias="champion",
             cost_matrix=CostMatrix(fn_cost_usd=cost.fn_cost_usd, fp_cost_usd=cost.fp_cost_usd),
             psi_threshold=monitoring.psi_threshold,
+            psi_top_n=monitoring.psi_top_n,
             auprc_floor=monitoring.auprc_floor,
             drift_debounce_cycles=monitoring.drift_debounce_cycles,
             window_size=monitoring.window_size,

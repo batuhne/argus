@@ -51,8 +51,11 @@ evaluation:
 monitoring:
   # PSI above this on any model-input feature is a meaningful population shift
   psi_threshold: 0.2
-  # rolling AUPRC below this signals concept drift / performance decay
-  auprc_floor: 0.05
+  # cap per-feature PSI series at the worst N to bound Prometheus cardinality
+  psi_top_n: 15
+  # rolling AUPRC below this triggers a retrain; set under the holdout backtest, with
+  # debounce and cooldown absorbing single-window variance so only sustained decay fires
+  auprc_floor: 0.30
   # consecutive breach recompute cycles before a drift-alert is published
   drift_debounce_cycles: 3
   window_size: 5000

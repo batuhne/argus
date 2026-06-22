@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -67,6 +68,7 @@ def _extract_psi(result: dict[str, Any], columns: Sequence[str]) -> dict[str, fl
         config = metric.get("config", {})
         column = config.get("column")
         value = metric.get("value")
-        if column in wanted and isinstance(value, int | float):
+        # A non-finite PSI from a degenerate bin would poison max_psi and the top-N rank.
+        if column in wanted and isinstance(value, int | float) and math.isfinite(value):
             psi[column] = float(value)
     return psi

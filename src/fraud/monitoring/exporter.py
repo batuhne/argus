@@ -41,7 +41,9 @@ DRIFT_KIND_PERF = "concept_drift"
 ROLLING_AUPRC = Gauge("argus_rolling_auprc", "Rolling AUPRC over labeled predictions")
 BUSINESS_COST = Gauge("argus_business_cost_per_txn_usd", "Realized cost per labeled transaction")
 FLAGGED_RATE = Gauge("argus_flagged_rate", "Share of labeled transactions flagged as fraud")
+# The top-N PSI cap relies on clear(), so the monitor must run as a single process.
 FEATURE_PSI = Gauge("argus_feature_drift_psi", "Feature PSI vs training baseline", ["feature"])
+FEATURE_PSI_MAX = Gauge("argus_feature_drift_psi_max", "Highest feature PSI vs training baseline")
 DRIFTED_FEATURES = Gauge("argus_drifted_features", "Model-input features with PSI above threshold")
 MATCHED_TOTAL = Gauge("argus_matched_join", "Predictions joined with a label in the window")
 PENDING_JOIN = Gauge("argus_pending_join", "Predictions awaiting their delayed label")
@@ -53,6 +55,10 @@ DRIFT_ALERTS = Counter("argus_drift_alerts_total", "Drift alerts published", ["k
 
 def _feature_value(value: float | None) -> float:
     return math.nan if value is None else value
+
+
+def _top_psi(psi: dict[str, float], top_n: int) -> list[tuple[str, float]]:
+    return sorted(psi.items(), key=lambda item: item[1], reverse=True)[:top_n]
 
 
 class DriftFn(Protocol):
@@ -149,15 +155,21 @@ class MonitorState:
 
         alerts: list[DriftAlertEvent] = []
         if drift is not None:
-            for feature, psi in drift.psi.items():
-                FEATURE_PSI.labels(feature=feature).set(psi)
-            DRIFTED_FEATURES.set(len(drift.drifted_features))
+            self._publish_psi(drift)
             if self._data_latch.update(bool(drift.drifted_features)):
                 alerts.append(_data_drift_alert(drift))
 
         if self._perf_latch.update(self._auprc_below_floor(auprc)):
             alerts.append(_perf_decay_alert(auprc, self.cfg.auprc_floor))
         return alerts
+
+    def _publish_psi(self, drift: FeatureDrift) -> None:
+        # Clear first so a feature dropping out of the top-N stops reporting a stale series.
+        FEATURE_PSI.clear()
+        for feature, psi in _top_psi(drift.psi, self.cfg.psi_top_n):
+            FEATURE_PSI.labels(feature=feature).set(psi)
+        FEATURE_PSI_MAX.set(drift.max_psi)
+        DRIFTED_FEATURES.set(len(drift.drifted_features))
 
     def _auprc_below_floor(self, auprc: float) -> bool:
         if math.isnan(auprc) or self._perf.matched_count < self.cfg.min_matched_for_auprc:

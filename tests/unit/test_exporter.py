@@ -3,6 +3,7 @@ import math
 from typing import Any
 
 import pandas as pd
+import pytest
 from confluent_kafka import KafkaException
 
 from fraud.ingestion.stream import ScoredFeaturesEvent, serialize
@@ -11,12 +12,23 @@ from fraud.monitoring.drift import FeatureDrift
 from fraud.monitoring.exporter import (
     DRIFT_KIND_DATA,
     DRIFT_KIND_PERF,
+    FEATURE_PSI,
+    FEATURE_PSI_MAX,
     BreachLatch,
     MonitorState,
     _commit,
     _route,
+    _top_psi,
 )
 from fraud.training.features import FEATURE_COLUMNS
+
+
+@pytest.fixture(autouse=True)
+def _single_process_registry(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The monitor runs single-process, so clear() bounds the PSI gauge. Drop any
+    # multiprocess flag another test module set earlier so we exercise that path.
+    monkeypatch.delenv("PROMETHEUS_MULTIPROC_DIR", raising=False)
+    monkeypatch.delenv("prometheus_multiproc_dir", raising=False)
 
 
 def test_breach_latch_fires_once_then_rearms_on_recovery() -> None:
@@ -80,6 +92,13 @@ def _drift_raises(
     raise ValueError("An empty column 'C1' was provided for drift calculation")
 
 
+def _drift_ranked(
+    _ref: pd.DataFrame, _cur: pd.DataFrame, _cols: Any, *, psi_threshold: float
+) -> FeatureDrift:
+    psi = {f"f{i}": round(0.9 - i * 0.1, 1) for i in range(6)}
+    return FeatureDrift(psi=psi, psi_threshold=psi_threshold)
+
+
 def test_data_drift_alert_emitted_only_after_debounce() -> None:
     producer = _FakeProducer()
     cfg = _cfg(drift_debounce_cycles=2, min_current_for_drift=1)
@@ -115,6 +134,41 @@ def test_recompute_survives_drift_failure() -> None:
     state.recompute()
 
     assert producer.produced == []
+
+
+def test_top_psi_returns_highest_descending() -> None:
+    assert _top_psi({"a": 0.1, "b": 0.9, "c": 0.4}, 2) == [("b", 0.9), ("c", 0.4)]
+
+
+def test_top_psi_returns_all_when_fewer_than_requested() -> None:
+    assert _top_psi({"a": 0.1}, 5) == [("a", 0.1)]
+
+
+def test_top_psi_empty_returns_empty() -> None:
+    assert _top_psi({}, 5) == []
+
+
+def test_only_top_n_feature_psi_series_exposed() -> None:
+    producer = _FakeProducer()
+    cfg = _cfg(min_current_for_drift=1, psi_top_n=3)
+    state = MonitorState(cfg, _baseline(), producer, drift_fn=_drift_ranked)  # type: ignore[arg-type]
+    state.handle_scored_features(_scored("t-1"))
+
+    state.recompute()
+
+    exposed = {sample.labels["feature"] for sample in next(iter(FEATURE_PSI.collect())).samples}
+    assert exposed == {"f0", "f1", "f2"}
+
+
+def test_feature_psi_max_tracks_worst_feature() -> None:
+    producer = _FakeProducer()
+    cfg = _cfg(min_current_for_drift=1, psi_top_n=3)
+    state = MonitorState(cfg, _baseline(), producer, drift_fn=_drift_ranked)  # type: ignore[arg-type]
+    state.handle_scored_features(_scored("t-1"))
+
+    state.recompute()
+
+    assert next(iter(FEATURE_PSI_MAX.collect())).samples[0].value == 0.9
 
 
 def test_perf_decay_alert_emitted_when_auprc_below_floor() -> None:

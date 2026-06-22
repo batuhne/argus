@@ -50,7 +50,7 @@ groups:
   - name: model_health
     rules:
       - alert: FeatureDriftDetected
-        expr: max(argus_feature_drift_psi) > 0.2
+        expr: argus_feature_drift_psi_max > 0.2
         for: 1m
         labels:
           severity: warning
@@ -58,8 +58,9 @@ groups:
           summary: "Model-input feature drift detected"
           description: "A feature PSI is above 0.2 versus the training baseline."
 
+      # Threshold mirrors monitoring.auprc_floor in params.yaml; keep the two in sync.
       - alert: ModelPerformanceDecay
-        expr: argus_rolling_auprc < 0.05 and argus_matched_join > 200
+        expr: argus_rolling_auprc < 0.30 and argus_matched_join > 200
         for: 5m
         labels:
           severity: critical

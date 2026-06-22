@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from fraud.monitoring.drift import compute_feature_drift
+from fraud.monitoring.drift import _extract_psi, compute_feature_drift
 
 COLUMNS = ["stable", "shifted"]
 
@@ -35,3 +35,17 @@ def test_compute_feature_drift_clean_when_distributions_match() -> None:
 
     assert drift.drifted_features == []
     assert drift.max_psi < drift.psi_threshold
+
+
+def test_extract_psi_drops_non_finite_values() -> None:
+    snapshot = {
+        "metrics": [
+            {"config": {"column": "stable"}, "value": 0.3},
+            {"config": {"column": "broken"}, "value": float("nan")},
+            {"config": {"column": "huge"}, "value": float("inf")},
+        ]
+    }
+
+    psi = _extract_psi(snapshot, ["stable", "broken", "huge"])
+
+    assert psi == {"stable": 0.3}

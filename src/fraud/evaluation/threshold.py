@@ -80,19 +80,34 @@ def _cost_curve(
     flagged = np.arange(1, n + 1, dtype=np.int64)
     fp_cum = flagged - tp_cum
 
-    recall = (tp_cum / positives) if positives > 0 else np.zeros(n, dtype=np.float64)
+    boundary = _last_index_per_distinct_score(scores_sorted)
+    tp_cum = tp_cum[boundary]
+    flagged = flagged[boundary]
+    fp_cum = fp_cum[boundary]
+    thresholds = scores_sorted[boundary]
+
+    recall = (tp_cum / positives) if positives > 0 else np.zeros(len(tp_cum), dtype=np.float64)
     precision = tp_cum / np.maximum(flagged, 1)
     flagged_rate = flagged / n
     fn_count = positives - tp_cum
     total_cost = fn_count * matrix.fn_cost_usd + fp_cum * matrix.fp_cost_usd
 
     return _CostCurve(
-        thresholds=scores_sorted.astype(np.float64, copy=False),
+        thresholds=thresholds.astype(np.float64, copy=False),
         recall=recall.astype(np.float64, copy=False),
         precision=precision.astype(np.float64, copy=False),
         flagged_rate=flagged_rate.astype(np.float64, copy=False),
         total_cost=total_cost.astype(np.float64, copy=False),
     )
+
+
+def _last_index_per_distinct_score(scores_desc: NDArray[np.float64]) -> NDArray[np.bool_]:
+    """Mark the last index of each tied-score run. Serving applies the threshold as
+    score >= t, flagging every row that shares t rather than a rank-ordered prefix, so
+    these are the only thresholds whose recall, flagged rate, and cost the >= rule reproduces."""
+    boundary = np.ones(len(scores_desc), dtype=bool)
+    boundary[:-1] = scores_desc[1:] != scores_desc[:-1]
+    return boundary
 
 
 def _feasible_mask(curve: _CostCurve, constraints: ThresholdConstraints) -> NDArray[np.bool_]:

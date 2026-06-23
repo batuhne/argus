@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from fraud.evaluation.business import CostMatrix
+from fraud.evaluation.business import CostMatrix, confusion_at_threshold
 from fraud.evaluation.threshold import (
     ThresholdConstraints,
     select_threshold,
@@ -32,9 +32,36 @@ def test_select_threshold_minimizes_cost_under_permissive_constraints() -> None:
 
     decision = select_threshold(y, scores, matrix=_matrix(), constraints=_permissive())
 
-    assert 0.0 <= decision.threshold <= 1.0
-    assert decision.expected_cost >= 0.0
-    assert decision.flagged_rate <= 1.0
+    # Flagging down to 0.50 catches all three frauds for one false positive: cost 5.
+    assert decision.threshold == pytest.approx(0.50)
+    assert decision.expected_cost == pytest.approx(5.0)
+    assert decision.recall == pytest.approx(1.0)
+    assert decision.flagged_rate == pytest.approx(4 / 7)
+    assert decision.precision == pytest.approx(0.75)
+
+
+def test_reported_metrics_match_applied_threshold_under_tied_scores() -> None:
+    # Three rows share the boundary score; serving flags all of them with >=, so the
+    # reported flagged rate and recall must equal what applying the threshold produces.
+    y = np.array([1, 0, 0, 0])
+    scores = np.array([0.5, 0.5, 0.5, 0.1])
+
+    decision = select_threshold(y, scores, matrix=_matrix(), constraints=_permissive())
+    true_pos, false_pos, _, false_neg = confusion_at_threshold(y, scores, decision.threshold)
+
+    assert decision.flagged_rate == pytest.approx((true_pos + false_pos) / len(y))
+    assert decision.recall == pytest.approx(true_pos / (true_pos + false_neg))
+
+
+def test_alert_volume_budget_is_honored_under_tied_scores() -> None:
+    # The cheapest cut flags three of four tied rows. No threshold the >= rule reproduces
+    # meets a 0.5 budget, so selection must fail rather than silently overshoot it.
+    y = np.array([1, 0, 0, 0])
+    scores = np.array([0.5, 0.5, 0.5, 0.1])
+    constraints = ThresholdConstraints(recall_floor=0.0, alert_volume_budget=0.5)
+
+    with pytest.raises(RuntimeError, match="no threshold"):
+        select_threshold(y, scores, matrix=_matrix(), constraints=constraints)
 
 
 def test_select_threshold_raises_when_recall_floor_infeasible() -> None:

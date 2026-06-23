@@ -32,6 +32,15 @@ def test_fit_isotonic_raises_on_shape_mismatch() -> None:
         fit_isotonic(np.array([0, 1]), np.array([0.1, 0.2, 0.3]))
 
 
+@pytest.mark.parametrize("label", [0, 1])
+def test_fit_isotonic_raises_on_single_class(label: int) -> None:
+    y = np.full(20, label, dtype=int)
+    scores = np.linspace(0.0, 1.0, 20)
+
+    with pytest.raises(ValueError, match="single-class"):
+        fit_isotonic(y, scores)
+
+
 def test_reliability_curve_renders_without_error_on_balanced_input() -> None:
     rng = np.random.default_rng(1)
     y = rng.integers(0, 2, size=200)

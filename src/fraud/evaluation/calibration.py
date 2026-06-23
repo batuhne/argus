@@ -35,6 +35,8 @@ def fit_isotonic(y_val: ArrayLike, raw_scores: ArrayLike) -> CalibrationResult:
     y_arr = np.asarray(y_val).astype(np.int8, copy=False)
     score_arr = np.asarray(raw_scores, dtype=np.float64)
     _require_aligned(y_arr, score_arr)
+    if not _has_both_classes(y_arr):
+        raise ValueError("cannot fit isotonic calibration on a single-class validation set")
 
     regressor = IsotonicRegression(out_of_bounds="clip", y_min=0.0, y_max=1.0)
     regressor.fit(score_arr, y_arr)

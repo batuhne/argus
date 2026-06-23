@@ -1,9 +1,10 @@
-"""Rolling model performance from a bounded join of scores and delayed labels."""
+"""Rolling model performance from an event-time-bounded join of scores and delayed labels."""
 
 from __future__ import annotations
 
 import math
 from collections import OrderedDict, deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TypeVar
 
@@ -11,31 +12,25 @@ from fraud.evaluation.business import CostMatrix
 from fraud.evaluation.metrics import auprc
 
 DEFAULT_WINDOW_SIZE = 5000
-# Must exceed predictions in flight before their labels arrive (arrival_rate * max_lag); the
-# holdout replay peaks near 20k. Too small evicts a pending score before its label lands.
-DEFAULT_JOIN_RETENTION = 30000
+# Seconds a score stays joinable, set above the longest label lag; also the restart-replay window.
+DEFAULT_RETENTION_SECONDS = 1800.0
 
-_K = TypeVar("_K")
 _V = TypeVar("_V")
 
 
 @dataclass(slots=True)
 class RollingPerformance:
-    """Joins scored-features with delayed labels by transaction id to track decay.
-
-    Labels arrive long after their prediction, so unmatched scores wait in a
-    bounded buffer until their label shows up or they age out (the join window).
-    Matches are idempotent: a transaction is counted once, so at-least-once
-    redelivery of either side never double counts the rolling metrics.
-    """
+    """Joins scored-features to delayed labels by transaction id. A late label waits until it
+    matches or ages out of the event-time window; within the window a match counts once."""
 
     cost_matrix: CostMatrix
     window_size: int = DEFAULT_WINDOW_SIZE
-    join_retention: int = DEFAULT_JOIN_RETENTION
-    _pending: OrderedDict[str, tuple[float, bool]] = field(init=False)
-    _early_labels: OrderedDict[str, int] = field(init=False)
-    _resolved: OrderedDict[str, None] = field(init=False)
+    retention_seconds: float = DEFAULT_RETENTION_SECONDS
+    _pending: OrderedDict[str, tuple[float, bool, float]] = field(init=False)
+    _early_labels: OrderedDict[str, tuple[int, float]] = field(init=False)
+    _resolved: OrderedDict[str, float] = field(init=False)
     _matched: deque[tuple[float, int, bool]] = field(init=False)
+    _high_water: float = field(init=False, default=0.0)
 
     def __post_init__(self) -> None:
         self._pending = OrderedDict()
@@ -43,27 +38,33 @@ class RollingPerformance:
         self._resolved = OrderedDict()
         self._matched = deque(maxlen=self.window_size)
 
-    def observe_score(self, transaction_id: str, fraud_score: float, decision: bool) -> None:
+    def observe_score(
+        self, transaction_id: str, fraud_score: float, decision: bool, *, event_time: float
+    ) -> None:
+        self._advance(event_time)
+        if self._expired(event_time):
+            return
         if transaction_id in self._resolved:
             return
         early_label = self._early_labels.pop(transaction_id, None)
         if early_label is not None:
-            self._record(transaction_id, fraud_score, decision, early_label)
+            self._record(transaction_id, fraud_score, decision, early_label[0], event_time)
             return
-        self._pending[transaction_id] = (fraud_score, decision)
+        self._pending[transaction_id] = (fraud_score, decision, event_time)
         self._pending.move_to_end(transaction_id)
-        _cap(self._pending, self.join_retention)
 
-    def observe_label(self, transaction_id: str, is_fraud: int) -> None:
+    def observe_label(self, transaction_id: str, is_fraud: int, *, event_time: float) -> None:
+        self._advance(event_time)
+        if self._expired(event_time):
+            return
         if transaction_id in self._resolved:
             return
         scored = self._pending.pop(transaction_id, None)
         if scored is None:
-            self._early_labels[transaction_id] = is_fraud
+            self._early_labels[transaction_id] = (is_fraud, event_time)
             self._early_labels.move_to_end(transaction_id)
-            _cap(self._early_labels, self.join_retention)
             return
-        self._record(transaction_id, scored[0], scored[1], is_fraud)
+        self._record(transaction_id, scored[0], scored[1], is_fraud, event_time)
 
     def rolling_auprc(self) -> float:
         if not self._matched:
@@ -98,12 +99,41 @@ class RollingPerformance:
     def pending_count(self) -> int:
         return len(self._pending)
 
-    def _record(self, transaction_id: str, fraud_score: float, decision: bool, label: int) -> None:
+    @property
+    def current_event_time(self) -> float:
+        return self._high_water
+
+    def _record(
+        self,
+        transaction_id: str,
+        fraud_score: float,
+        decision: bool,
+        label: int,
+        event_time: float,
+    ) -> None:
         self._matched.append((fraud_score, label, decision))
-        self._resolved[transaction_id] = None
-        _cap(self._resolved, self.join_retention)
+        self._resolved[transaction_id] = event_time
+
+    def _expired(self, event_time: float) -> bool:
+        return event_time < self._high_water - self.retention_seconds
+
+    def _advance(self, event_time: float) -> None:
+        """Advance the high-water mark and drop entries past retention."""
+        if event_time > self._high_water:
+            self._high_water = event_time
+        cutoff = self._high_water - self.retention_seconds
+        _evict_before(self._pending, cutoff, lambda entry: entry[2])
+        _evict_before(self._early_labels, cutoff, lambda entry: entry[1])
+        _evict_before(self._resolved, cutoff, lambda entry: entry)
 
 
-def _cap(mapping: OrderedDict[_K, _V], limit: int) -> None:
-    while len(mapping) > limit:
+def _evict_before(
+    mapping: OrderedDict[str, _V], cutoff: float, event_time_of: Callable[[_V], float]
+) -> None:
+    """Drop entries older than the cutoff, front-only: out-of-order entries are over-retained,
+    never dropped early."""
+    while mapping:
+        oldest = next(iter(mapping.values()))
+        if event_time_of(oldest) >= cutoff:
+            break
         mapping.popitem(last=False)

@@ -4,7 +4,7 @@ from typing import Any
 
 import pandas as pd
 import pytest
-from confluent_kafka import KafkaException
+from confluent_kafka import OFFSET_END, TopicPartition
 
 from fraud.ingestion.stream import ScoredFeaturesEvent, serialize
 from fraud.monitoring.config import MonitoringConfig
@@ -16,9 +16,10 @@ from fraud.monitoring.exporter import (
     FEATURE_PSI_MAX,
     BreachLatch,
     MonitorState,
-    _commit,
+    _event_time_seconds,
     _route,
     _top_psi,
+    _window_start_partitions,
 )
 from fraud.training.features import FEATURE_COLUMNS
 
@@ -103,7 +104,7 @@ def test_data_drift_alert_emitted_only_after_debounce() -> None:
     producer = _FakeProducer()
     cfg = _cfg(drift_debounce_cycles=2, min_current_for_drift=1)
     state = MonitorState(cfg, _baseline(), producer, drift_fn=_drift_drifted)  # type: ignore[arg-type]
-    state.handle_scored_features(_scored("t-1"))
+    state.handle_scored_features(_scored("t-1"), event_time=0.0)
 
     state.recompute()
     assert producer.produced == []
@@ -118,7 +119,7 @@ def test_clean_distribution_emits_no_alert() -> None:
     producer = _FakeProducer()
     cfg = _cfg(drift_debounce_cycles=1, min_current_for_drift=1)
     state = MonitorState(cfg, _baseline(), producer, drift_fn=_drift_clean)  # type: ignore[arg-type]
-    state.handle_scored_features(_scored("t-1"))
+    state.handle_scored_features(_scored("t-1"), event_time=0.0)
     state.recompute()
     state.recompute()
     assert producer.produced == []
@@ -128,7 +129,7 @@ def test_recompute_survives_drift_failure() -> None:
     producer = _FakeProducer()
     cfg = _cfg(drift_debounce_cycles=1, min_current_for_drift=1)
     state = MonitorState(cfg, _baseline(), producer, drift_fn=_drift_raises)  # type: ignore[arg-type]
-    state.handle_scored_features(_scored("t-1"))
+    state.handle_scored_features(_scored("t-1"), event_time=0.0)
 
     # A degenerate window makes drift raise; recompute must not crash the monitor.
     state.recompute()
@@ -152,7 +153,7 @@ def test_only_top_n_feature_psi_series_exposed() -> None:
     producer = _FakeProducer()
     cfg = _cfg(min_current_for_drift=1, psi_top_n=3)
     state = MonitorState(cfg, _baseline(), producer, drift_fn=_drift_ranked)  # type: ignore[arg-type]
-    state.handle_scored_features(_scored("t-1"))
+    state.handle_scored_features(_scored("t-1"), event_time=0.0)
 
     state.recompute()
 
@@ -164,7 +165,7 @@ def test_feature_psi_max_tracks_worst_feature() -> None:
     producer = _FakeProducer()
     cfg = _cfg(min_current_for_drift=1, psi_top_n=3)
     state = MonitorState(cfg, _baseline(), producer, drift_fn=_drift_ranked)  # type: ignore[arg-type]
-    state.handle_scored_features(_scored("t-1"))
+    state.handle_scored_features(_scored("t-1"), event_time=0.0)
 
     state.recompute()
 
@@ -182,8 +183,8 @@ def test_perf_decay_alert_emitted_when_auprc_below_floor() -> None:
     state = MonitorState(cfg, _baseline(), producer, drift_fn=_drift_clean)  # type: ignore[arg-type]
     for i in range(4):
         tid = f"t-{i}"
-        state.handle_scored_features(_scored(tid))
-        state.handle_label(tid, i % 2)
+        state.handle_scored_features(_scored(tid), event_time=0.0)
+        state.handle_label(tid, i % 2, event_time=0.0)
     state.recompute()
 
     assert len(producer.produced) == 1
@@ -201,7 +202,7 @@ def test_null_feature_is_recorded_as_nan_in_window() -> None:
         features={**dict.fromkeys(FEATURE_COLUMNS, 0.5), "C1": None},
     )
 
-    state.handle_scored_features(event)
+    state.handle_scored_features(event, event_time=0.0)
 
     window_row = state._features[-1]
     assert math.isnan(window_row["C1"])
@@ -220,6 +221,9 @@ def test_route_skips_poison_message_without_raising() -> None:
         def topic(self) -> str:
             return cfg.scored_features_topic
 
+        def timestamp(self) -> tuple[int, int]:
+            return (1, 0)
+
     _route(state, cfg, _Msg())  # type: ignore[arg-type]
     # A valid scored-features message is handled.
     valid = serialize(_scored("t-1"))
@@ -231,6 +235,9 @@ def test_route_skips_poison_message_without_raising() -> None:
         def topic(self) -> str:
             return cfg.scored_features_topic
 
+        def timestamp(self) -> tuple[int, int]:
+            return (1, 0)
+
     _route(state, cfg, _Good())  # type: ignore[arg-type]
     state.recompute()
     assert producer.produced == []
@@ -240,30 +247,48 @@ def test_alert_kinds_are_distinct() -> None:
     assert DRIFT_KIND_DATA != DRIFT_KIND_PERF
 
 
-class _CommitConsumer:
-    def __init__(self, error: Exception | None = None) -> None:
-        self.commits = 0
-        self._error = error
+def test_event_time_uses_producer_timestamp_in_seconds() -> None:
+    class _Ts:
+        def timestamp(self) -> tuple[int, int]:
+            return (1, 5000)
 
-    def commit(self, asynchronous: bool) -> None:
-        self.commits += 1
-        if self._error is not None:
-            raise self._error
+    assert _event_time_seconds(_Ts(), fallback=0.0) == 5.0  # type: ignore[arg-type]
 
 
-def test_commit_skips_when_nothing_consumed() -> None:
-    consumer = _CommitConsumer()
-    _commit(consumer, 0)  # type: ignore[arg-type]
-    assert consumer.commits == 0
+def test_event_time_falls_back_to_join_clock_when_timestamp_missing() -> None:
+    class _NoTs:
+        def timestamp(self) -> tuple[int, int]:
+            return (0, -1)
+
+    # A timeless message must reuse the join clock, never jump to wall-clock now.
+    assert _event_time_seconds(_NoTs(), fallback=123.0) == 123.0  # type: ignore[arg-type]
 
 
-def test_commit_runs_when_messages_consumed() -> None:
-    consumer = _CommitConsumer()
-    _commit(consumer, 5)  # type: ignore[arg-type]
-    assert consumer.commits == 1
+class _SeekConsumer:
+    def __init__(self, located: list[TopicPartition]) -> None:
+        self._located = located
+        self.queried: list[TopicPartition] = []
+
+    def offsets_for_times(
+        self, partitions: list[TopicPartition], timeout: float
+    ) -> list[TopicPartition]:
+        self.queried = partitions
+        return self._located
 
 
-def test_commit_swallows_kafka_errors() -> None:
-    consumer = _CommitConsumer(error=KafkaException("no offset"))
-    _commit(consumer, 5)  # type: ignore[arg-type]  # must not raise
-    assert consumer.commits == 1
+def test_window_start_uses_resolved_offsets_and_tails_when_too_recent() -> None:
+    consumer = _SeekConsumer(
+        located=[
+            TopicPartition("scored-features", 0, 42),
+            TopicPartition("labels", 0, -1),
+        ]
+    )
+    requested = [TopicPartition("scored-features", 0), TopicPartition("labels", 0)]
+
+    result = _window_start_partitions(consumer, requested, cutoff_ms=1000)  # type: ignore[arg-type]
+
+    # cutoff written into each partition's offset for the lookup
+    assert [tp.offset for tp in consumer.queried] == [1000, 1000]
+    # resolved offset kept; a nothing-recent partition tails
+    assert result[0].offset == 42
+    assert result[1].offset == OFFSET_END

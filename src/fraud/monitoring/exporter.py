@@ -12,7 +12,7 @@ from types import FrameType
 from typing import Protocol
 
 import pandas as pd
-from confluent_kafka import Consumer, KafkaException, Message, Producer
+from confluent_kafka import OFFSET_END, Consumer, Message, Producer, TopicPartition
 from prometheus_client import Counter, Gauge, start_http_server
 from pydantic import ValidationError
 
@@ -108,14 +108,16 @@ class MonitorState:
         self._perf = RollingPerformance(
             cost_matrix=self.cfg.cost_matrix,
             window_size=self.cfg.window_size,
-            join_retention=self.cfg.join_retention,
+            retention_seconds=self.cfg.retention_seconds,
         )
         self._features = deque(maxlen=self.cfg.window_size)
         self._data_latch = BreachLatch(self.cfg.drift_debounce_cycles)
         self._perf_latch = BreachLatch(self.cfg.drift_debounce_cycles)
 
-    def handle_scored_features(self, event: ScoredFeaturesEvent) -> None:
-        self._perf.observe_score(event.transaction_id, event.fraud_score, event.decision)
+    def handle_scored_features(self, event: ScoredFeaturesEvent, *, event_time: float) -> None:
+        self._perf.observe_score(
+            event.transaction_id, event.fraud_score, event.decision, event_time=event_time
+        )
         # null is a missing feature; keep it NaN to match the baseline, not a fake zero.
         self._features.append(
             {name: _feature_value(event.features.get(name)) for name in FEATURE_COLUMNS}
@@ -123,9 +125,13 @@ class MonitorState:
         SCORED_EVENTS.inc()
         MODEL_VERSION.set(event.model_version)
 
-    def handle_label(self, transaction_id: str, is_fraud: int) -> None:
-        self._perf.observe_label(transaction_id, is_fraud)
+    def handle_label(self, transaction_id: str, is_fraud: int, *, event_time: float) -> None:
+        self._perf.observe_label(transaction_id, is_fraud, event_time=event_time)
         LABEL_EVENTS.inc()
+
+    @property
+    def current_event_time(self) -> float:
+        return self._perf.current_event_time
 
     def recompute(self) -> None:
         drift = self._compute_drift()
@@ -229,22 +235,22 @@ def run_exporter(cfg: MonitoringConfig, shutdown: _ShutdownFlag | None = None) -
         cfg, load_baseline(cfg), Producer(durable_producer_config(cfg.bootstrap_servers))
     )
     consumer = _build_consumer(cfg)
-    consumer.subscribe([cfg.scored_features_topic, cfg.labels_topic])
+    # Metrics are derived data: rewind to the retention window and rebuild from the log on assign.
+    consumer.subscribe(
+        [cfg.scored_features_topic, cfg.labels_topic],
+        on_assign=lambda c, parts: _seek_to_window_start(c, parts, cfg.retention_seconds),
+    )
     start_http_server(cfg.exporter_port)
     log.info("exporter_start", port=cfg.exporter_port, baseline_rows=len(state.baseline))
 
     last_recompute = time.monotonic()
-    consumed = 0
     try:
         while not shutdown.requested:
             message = consumer.poll(POLL_TIMEOUT_SECONDS)
             if message is not None and message.error() is None:
                 _route(state, cfg, message)
-                consumed += 1
             if time.monotonic() - last_recompute >= cfg.recompute_interval_seconds:
                 state.recompute()
-                _commit(consumer, consumed)
-                consumed = 0
                 last_recompute = time.monotonic()
     finally:
         consumer.close()
@@ -252,29 +258,49 @@ def run_exporter(cfg: MonitoringConfig, shutdown: _ShutdownFlag | None = None) -
         log.info("exporter_stopped")
 
 
-def _commit(consumer: Consumer, consumed: int) -> None:
-    # Nothing is stored to commit until a message has been consumed; a transient
-    # broker hiccup on commit must not take down a read-side monitor.
-    if consumed == 0:
-        return
-    try:
-        consumer.commit(asynchronous=False)
-    except KafkaException as exc:
-        log.warning("monitor_commit_failed", error=str(exc))
+def _seek_to_window_start(
+    consumer: Consumer, partitions: list[TopicPartition], retention_seconds: float
+) -> None:
+    cutoff_ms = int((time.time() - retention_seconds) * 1000)
+    consumer.assign(_window_start_partitions(consumer, partitions, cutoff_ms))
+
+
+def _window_start_partitions(
+    consumer: Consumer, partitions: list[TopicPartition], cutoff_ms: int
+) -> list[TopicPartition]:
+    """First offset at or after the cutoff per partition; tail if nothing is that recent."""
+    for partition in partitions:
+        partition.offset = cutoff_ms
+    located = consumer.offsets_for_times(partitions, timeout=10.0)
+    for partition in located:
+        if partition.offset < 0:
+            partition.offset = OFFSET_END
+    return located
 
 
 def _route(state: MonitorState, cfg: MonitoringConfig, message: Message) -> None:
     payload = message.value()
     if payload is None:
         return
+    event_time = _event_time_seconds(message, state.current_event_time)
     try:
         if message.topic() == cfg.scored_features_topic:
-            state.handle_scored_features(deserialize_scored_features(payload))
+            scored = deserialize_scored_features(payload)
+            state.handle_scored_features(scored, event_time=event_time)
         else:
             label = deserialize_label(payload)
-            state.handle_label(label.transaction_id, label.is_fraud)
+            state.handle_label(label.transaction_id, label.is_fraud, event_time=event_time)
     except ValidationError as exc:
         log.warning("monitor_message_skipped", topic=message.topic(), error=str(exc))
+
+
+def _event_time_seconds(message: Message, fallback: float) -> float:
+    """Join clock: the producer's wall-clock publish time. A timeless message reuses the current
+    join clock so one anomaly cannot jump it and evict live pending entries."""
+    _, timestamp_ms = message.timestamp()
+    if timestamp_ms < 0:
+        return fallback
+    return timestamp_ms / 1000.0
 
 
 def _build_consumer(cfg: MonitoringConfig) -> Consumer:

@@ -41,7 +41,7 @@ class MonitoringParams(BaseModel):
     auprc_floor: float = 0.30
     drift_debounce_cycles: int = 3
     window_size: int = 5000
-    join_retention: int = 30000
+    retention_seconds: float = 1800.0
     recompute_interval_seconds: float = 15.0
     min_matched_for_auprc: int = 200
     min_current_for_drift: int = 500

@@ -30,7 +30,7 @@ class MonitoringConfig:
     auprc_floor: float
     drift_debounce_cycles: int
     window_size: int
-    join_retention: int
+    retention_seconds: float
     recompute_interval_seconds: float
     min_matched_for_auprc: int
     min_current_for_drift: int
@@ -57,7 +57,7 @@ class MonitoringConfig:
             auprc_floor=monitoring.auprc_floor,
             drift_debounce_cycles=monitoring.drift_debounce_cycles,
             window_size=monitoring.window_size,
-            join_retention=monitoring.join_retention,
+            retention_seconds=monitoring.retention_seconds,
             recompute_interval_seconds=monitoring.recompute_interval_seconds,
             min_matched_for_auprc=monitoring.min_matched_for_auprc,
             min_current_for_drift=monitoring.min_current_for_drift,

@@ -59,8 +59,8 @@ monitoring:
   # consecutive breach recompute cycles before a drift-alert is published
   drift_debounce_cycles: 3
   window_size: 5000
-  # above predictions in flight before labels arrive (arrival_rate * max_lag); holdout peaks ~20k
-  join_retention: 30000
+  # seconds a score stays joinable (above the ~360s warped label lag); also the restart-replay window
+  retention_seconds: 1800.0
   recompute_interval_seconds: 15.0
   min_matched_for_auprc: 200
   min_current_for_drift: 500

@@ -17,6 +17,7 @@ def _cfg() -> StreamConfig:
         bootstrap_servers="localhost:19092",
         transactions_topic="transactions",
         predictions_topic="predictions",
+        dlq_topic="transactions-dlq",
         consumer_group="argus-fraud-consumer",
         predict_url="http://localhost:3001/predict",
     )

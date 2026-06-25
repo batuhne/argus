@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import random
 import signal
 import time
+from dataclasses import dataclass
+from enum import StrEnum
 from types import FrameType
 from typing import Any
 
 import requests
-from confluent_kafka import Consumer, Message, Producer
+from confluent_kafka import Consumer, KafkaException, Message, Producer, TopicPartition
 from pydantic import ValidationError
 
 from fraud.common.logging import configure_logging, get_logger
@@ -27,8 +30,44 @@ PREDICT_TIMEOUT_SECONDS = 5.0
 MAX_PREDICT_RETRIES = 5
 BACKOFF_BASE_SECONDS = 0.5
 BACKOFF_MAX_SECONDS = 8.0
+BACKOFF_JITTER_SECONDS = 0.3
 CLIENT_ERROR_START = 400
 SERVER_ERROR_START = 500
+TOO_MANY_REQUESTS = 429
+CIRCUIT_BREAKER_THRESHOLD = 3
+CIRCUIT_COOLDOWN_SECONDS = 10.0
+SHUTDOWN_POLL_SECONDS = 0.5
+FLUSH_TIMEOUT_SECONDS = 10.0
+
+
+class FetchOutcome(StrEnum):
+    OK = "ok"
+    REJECTED = "rejected"
+    UNAVAILABLE = "unavailable"
+    ABORTED = "aborted"
+
+
+@dataclass(frozen=True, slots=True)
+class PredictionResult:
+    outcome: FetchOutcome
+    prediction: PredictionEvent | None = None
+
+
+@dataclass(slots=True)
+class _CircuitBreaker:
+    threshold: int
+    cooldown_seconds: float
+    failures: int = 0
+
+    def record_success(self) -> None:
+        self.failures = 0
+
+    def record_failure(self) -> None:
+        self.failures += 1
+
+    @property
+    def is_open(self) -> bool:
+        return self.failures >= self.threshold
 
 
 class _ShutdownFlag:
@@ -45,6 +84,7 @@ def run_consumer(cfg: StreamConfig, shutdown: _ShutdownFlag | None = None) -> No
     consumer = _build_consumer(cfg)
     producer = Producer(durable_producer_config(cfg.bootstrap_servers))
     session = requests.Session()
+    breaker = _CircuitBreaker(CIRCUIT_BREAKER_THRESHOLD, CIRCUIT_COOLDOWN_SECONDS)
     consumer.subscribe([cfg.transactions_topic])
     log.info("consumer_start", topic=cfg.transactions_topic, predict_url=cfg.predict_url)
 
@@ -56,10 +96,17 @@ def run_consumer(cfg: StreamConfig, shutdown: _ShutdownFlag | None = None) -> No
             if message.error():
                 log.warning("consume_error", error=str(message.error()))
                 continue
-            _handle_message(message, cfg, session, producer, consumer, shutdown)
+            committed = _handle_message(
+                message, cfg, session, producer, consumer, shutdown, breaker
+            )
+            if not committed and not shutdown.requested:
+                _seek_back(consumer, message)
+                if breaker.is_open:
+                    log.warning("downstream_circuit_open", failures=breaker.failures)
+                    _interruptible_sleep(breaker.cooldown_seconds, shutdown)
     finally:
         consumer.close()
-        producer.flush()
+        producer.flush(FLUSH_TIMEOUT_SECONDS)
         session.close()
         log.info("consumer_stopped")
 
@@ -82,31 +129,42 @@ def _handle_message(
     producer: Producer,
     consumer: Consumer,
     shutdown: _ShutdownFlag,
-) -> None:
+    breaker: _CircuitBreaker,
+) -> bool:
+    """Score one message; True if committed, False to redeliver when a downstream is down."""
     payload = message.value()
     if payload is None:
-        consumer.commit(message=message, asynchronous=False)
-        return
+        log.warning("empty_payload_routed_to_dlq")
+        return _commit_to_dlq(message, cfg, producer, consumer, breaker, reason="empty_payload")
     try:
         event = deserialize_transaction(payload)
     except ValidationError as exc:
-        log.warning("poison_message_skipped", error=str(exc))
-        consumer.commit(message=message, asynchronous=False)
-        return
+        log.warning("poison_message_routed_to_dlq", error=str(exc))
+        return _commit_to_dlq(message, cfg, producer, consumer, breaker, reason="deserialize_error")
 
-    prediction = _fetch_prediction(cfg, session, event, shutdown)
-    if prediction is None:
-        # Commit to skip a rejected/unreachable message; on shutdown leave it for redelivery.
-        if not shutdown.requested:
-            consumer.commit(message=message, asynchronous=False)
-        return
+    result = _fetch_prediction(cfg, session, event, shutdown, max_attempts=_probe_or_full(breaker))
+    if result.outcome is FetchOutcome.OK and result.prediction is not None:
+        return _commit_prediction(message, cfg, producer, consumer, breaker, result.prediction)
+    if result.outcome is FetchOutcome.REJECTED:
+        log.warning("prediction_rejected_to_dlq", transaction_id=event.transaction_id)
+        return _commit_to_dlq(message, cfg, producer, consumer, breaker, reason="rejected")
+    if result.outcome is FetchOutcome.UNAVAILABLE:
+        breaker.record_failure()
+    return False
 
-    producer.produce(
-        cfg.predictions_topic,
-        key=prediction.card_id.encode("utf-8"),
-        value=serialize(prediction),
-    )
-    producer.flush()
+
+def _commit_prediction(
+    message: Message,
+    cfg: StreamConfig,
+    producer: Producer,
+    consumer: Consumer,
+    breaker: _CircuitBreaker,
+    prediction: PredictionEvent,
+) -> bool:
+    if not _publish_prediction(producer, cfg, prediction):
+        breaker.record_failure()
+        return False
+    _note_recovery(breaker)
     consumer.commit(message=message, asynchronous=False)
     log.info(
         "prediction_consumed",
@@ -114,6 +172,35 @@ def _handle_message(
         decision=prediction.decision,
         fraud_score=prediction.fraud_score,
     )
+    return True
+
+
+def _commit_to_dlq(
+    message: Message,
+    cfg: StreamConfig,
+    producer: Producer,
+    consumer: Consumer,
+    breaker: _CircuitBreaker,
+    *,
+    reason: str,
+) -> bool:
+    if not _to_dlq(producer, cfg, message, reason=reason):
+        breaker.record_failure()
+        return False
+    _note_recovery(breaker)
+    consumer.commit(message=message, asynchronous=False)
+    return True
+
+
+def _probe_or_full(breaker: _CircuitBreaker) -> int:
+    # While open, one probe per cooldown checks for recovery instead of re-running the full budget.
+    return 1 if breaker.is_open else MAX_PREDICT_RETRIES
+
+
+def _note_recovery(breaker: _CircuitBreaker) -> None:
+    if breaker.is_open:
+        log.info("downstream_recovered", failures=breaker.failures)
+    breaker.record_success()
 
 
 def _fetch_prediction(
@@ -121,11 +208,14 @@ def _fetch_prediction(
     session: requests.Session,
     event: TransactionEvent,
     shutdown: _ShutdownFlag,
-) -> PredictionEvent | None:
+    *,
+    max_attempts: int = MAX_PREDICT_RETRIES,
+) -> PredictionResult:
+    """Bounded retries: a 4xx (except 429) is a permanent reject, 5xx and 429 are retried."""
     body = predict_request_body(event)
-    for attempt in range(1, MAX_PREDICT_RETRIES + 1):
+    for attempt in range(1, max_attempts + 1):
         if shutdown.requested:
-            return None
+            return PredictionResult(FetchOutcome.ABORTED)
         try:
             response = session.post(cfg.predict_url, json=body, timeout=PREDICT_TIMEOUT_SECONDS)
         except requests.RequestException as exc:
@@ -133,19 +223,24 @@ def _fetch_prediction(
             _backoff(attempt)
             continue
         if response.status_code < CLIENT_ERROR_START:
-            return prediction_from_response(event, response.json())
-        if response.status_code < SERVER_ERROR_START:
-            log.warning(
-                "predict_rejected",
-                status=response.status_code,
-                transaction_id=event.transaction_id,
+            return PredictionResult(
+                FetchOutcome.OK, prediction_from_response(event, response.json())
             )
-            return None
-        log.warning("predict_unavailable", status=response.status_code, attempt=attempt)
-        _backoff(attempt)
+        if _is_retryable_status(response.status_code):
+            log.warning("predict_unavailable", status=response.status_code, attempt=attempt)
+            _backoff(attempt)
+            continue
+        log.warning(
+            "predict_rejected", status=response.status_code, transaction_id=event.transaction_id
+        )
+        return PredictionResult(FetchOutcome.REJECTED)
 
     log.error("predict_retries_exhausted", transaction_id=event.transaction_id)
-    return None
+    return PredictionResult(FetchOutcome.UNAVAILABLE)
+
+
+def _is_retryable_status(status_code: int) -> bool:
+    return status_code >= SERVER_ERROR_START or status_code == TOO_MANY_REQUESTS
 
 
 def predict_request_body(event: TransactionEvent) -> dict[str, dict[str, Any]]:
@@ -170,9 +265,73 @@ def prediction_from_response(event: TransactionEvent, body: dict[str, Any]) -> P
     )
 
 
+def _publish_prediction(producer: Producer, cfg: StreamConfig, prediction: PredictionEvent) -> bool:
+    return _produce_confirmed(
+        producer,
+        cfg.predictions_topic,
+        key=prediction.card_id.encode("utf-8"),
+        value=serialize(prediction),
+    )
+
+
+def _to_dlq(producer: Producer, cfg: StreamConfig, message: Message, *, reason: str) -> bool:
+    headers: list[tuple[str, str | bytes | None]] = [("reason", reason.encode("utf-8"))]
+    return _produce_confirmed(
+        producer,
+        cfg.dlq_topic,
+        key=message.key(),
+        value=message.value(),
+        headers=headers,
+    )
+
+
+def _produce_confirmed(
+    producer: Producer,
+    topic: str,
+    *,
+    key: bytes | None,
+    value: bytes | None,
+    headers: list[tuple[str, str | bytes | None]] | None = None,
+) -> bool:
+    # flush() reports a permanent failure only via the callback, so confirm both: queue drained
+    # within the timeout AND no delivery error. An unconfirmed write must not advance the offset.
+    delivered = True
+
+    def _on_delivery(error: object, _message: object) -> None:
+        nonlocal delivered
+        if error is not None:
+            delivered = False
+            log.warning("delivery_failed", topic=topic, error=str(error))
+
+    producer.produce(topic, key=key, value=value, headers=headers, on_delivery=_on_delivery)
+    pending = producer.flush(FLUSH_TIMEOUT_SECONDS)
+    return pending == 0 and delivered
+
+
+def _seek_back(consumer: Consumer, message: Message) -> None:
+    # A transaction we could not score is re-delivered once a downstream recovers, never dropped.
+    topic, partition, offset = message.topic(), message.partition(), message.offset()
+    if topic is None or partition is None or offset is None:
+        return
+    try:
+        consumer.seek(TopicPartition(topic, partition, offset))
+    except KafkaException as exc:
+        # A rebalance can revoke the partition between poll and seek; its new owner redelivers.
+        log.warning("seek_back_failed", error=str(exc))
+
+
 def _backoff(attempt: int) -> None:
     delay = min(BACKOFF_BASE_SECONDS * (2 ** (attempt - 1)), BACKOFF_MAX_SECONDS)
-    time.sleep(delay)
+    time.sleep(delay + random.uniform(0.0, BACKOFF_JITTER_SECONDS))
+
+
+def _interruptible_sleep(seconds: float, shutdown: _ShutdownFlag) -> None:
+    deadline = time.monotonic() + seconds
+    while not shutdown.requested:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0.0:
+            return
+        time.sleep(min(SHUTDOWN_POLL_SECONDS, remaining))
 
 
 def _install_shutdown_handler() -> _ShutdownFlag:

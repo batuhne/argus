@@ -108,7 +108,7 @@ services:
       - |
         set -eu
         existing="$$(rpk topic list -X brokers="$$REDPANDA_BROKERS" 2>/dev/null | tail -n +2)"
-        for t in transactions predictions scored-features labels drift-alerts; do
+        for t in transactions predictions scored-features labels drift-alerts transactions-dlq; do
           rf="$$(echo "$$existing" | awk -v t="$$t" '$$1==t {print $$3}')"
           if [ -n "$$rf" ]; then
             if [ "$$rf" != "$$REDPANDA_RF" ]; then

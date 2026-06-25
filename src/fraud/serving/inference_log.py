@@ -28,7 +28,18 @@ class InferenceLogger:
     def from_bootstrap(
         cls, bootstrap_servers: str, topic: str = SCORED_FEATURES_TOPIC
     ) -> InferenceLogger:
-        return cls(Producer({"bootstrap.servers": bootstrap_servers}), topic)
+        # Expire undeliverable records fast and cap the local queue so a broker outage
+        # drops logs instead of growing serving's memory.
+        return cls(
+            Producer(
+                {
+                    "bootstrap.servers": bootstrap_servers,
+                    "message.timeout.ms": "5000",
+                    "queue.buffering.max.messages": "10000",
+                }
+            ),
+            topic,
+        )
 
     def log(self, event: ScoredFeaturesEvent) -> None:
         try:

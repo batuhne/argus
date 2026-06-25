@@ -16,6 +16,7 @@ PREDICTIONS_TOPIC = "predictions"
 SCORED_FEATURES_TOPIC = "scored-features"
 LABELS_TOPIC = "labels"
 DRIFT_ALERTS_TOPIC = "drift-alerts"
+DLQ_TOPIC = "transactions-dlq"
 CONSUMER_GROUP = "argus-fraud-consumer"
 MONITOR_GROUP = "argus-fraud-monitor"
 RETRAIN_GROUP = "argus-fraud-retrainer"
@@ -26,6 +27,7 @@ class StreamConfig:
     bootstrap_servers: str
     transactions_topic: str
     predictions_topic: str
+    dlq_topic: str
     consumer_group: str
     predict_url: str
 
@@ -36,6 +38,7 @@ class StreamConfig:
             bootstrap_servers=settings.kafka_bootstrap_servers,
             transactions_topic=TRANSACTIONS_TOPIC,
             predictions_topic=PREDICTIONS_TOPIC,
+            dlq_topic=DLQ_TOPIC,
             consumer_group=CONSUMER_GROUP,
             predict_url=settings.serving_predict_url,
         )

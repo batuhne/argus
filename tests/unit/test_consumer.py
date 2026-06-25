@@ -5,12 +5,18 @@ import requests
 
 from fraud.ingestion.consumer import (
     MAX_PREDICT_RETRIES,
+    FetchOutcome,
+    _CircuitBreaker,
     _fetch_prediction,
+    _handle_message,
+    _interruptible_sleep,
+    _seek_back,
     _ShutdownFlag,
     predict_request_body,
     prediction_from_response,
+    run_consumer,
 )
-from fraud.ingestion.stream import StreamConfig, TransactionEvent
+from fraud.ingestion.stream import StreamConfig, TransactionEvent, serialize
 
 
 def _cfg() -> StreamConfig:
@@ -18,6 +24,7 @@ def _cfg() -> StreamConfig:
         bootstrap_servers="localhost:19092",
         transactions_topic="transactions",
         predictions_topic="predictions",
+        dlq_topic="transactions-dlq",
         consumer_group="argus-fraud-consumer",
         predict_url="http://localhost:3000/predict",
     )
@@ -30,6 +37,14 @@ def _event() -> TransactionEvent:
         amount=12.5,
         event_timestamp="2017-12-01T00:00:00+00:00",
     )
+
+
+def _payload() -> bytes:
+    return serialize(_event())
+
+
+def _breaker() -> _CircuitBreaker:
+    return _CircuitBreaker(threshold=3, cooldown_seconds=10.0)
 
 
 _PREDICT_BODY = {"fraud_score": 0.12, "decision": False, "threshold": 0.07, "model_version": 5}
@@ -55,6 +70,110 @@ class _FakeSession:
         if isinstance(response, Exception):
             raise response
         return response
+
+    def close(self) -> None:
+        pass
+
+
+class _FakeProducer:
+    def __init__(self, *, deliver: bool = True) -> None:
+        self.produced: list[tuple[str, bytes | None, Any]] = []
+        self._deliver = deliver
+        self._callbacks: list[Any] = []
+
+    def produce(
+        self,
+        topic: str,
+        value: Any = None,
+        key: Any = None,
+        headers: Any = None,
+        on_delivery: Any = None,
+    ) -> None:
+        self.produced.append((topic, value, headers))
+        if on_delivery is not None:
+            self._callbacks.append(on_delivery)
+
+    def flush(self, timeout: float | None = None) -> int:
+        error = None if self._deliver else "broker unavailable"
+        for callback in self._callbacks:
+            callback(error, None)
+        self._callbacks.clear()
+        return 0 if self._deliver else 1
+
+
+class _FakeConsumer:
+    def __init__(self) -> None:
+        self.commits = 0
+        self.seeks: list[Any] = []
+
+    def commit(self, message: Any, asynchronous: bool) -> None:
+        self.commits += 1
+
+    def seek(self, partition: Any) -> None:
+        self.seeks.append(partition)
+
+
+class _FakeMessage:
+    def __init__(
+        self,
+        value: bytes | None,
+        *,
+        key: bytes | None = b"k",
+        topic: str = "transactions",
+        partition: int = 0,
+        offset: int = 7,
+    ) -> None:
+        self._value = value
+        self._key = key
+        self._topic = topic
+        self._partition = partition
+        self._offset = offset
+
+    def value(self) -> bytes | None:
+        return self._value
+
+    def key(self) -> bytes | None:
+        return self._key
+
+    def topic(self) -> str:
+        return self._topic
+
+    def partition(self) -> int:
+        return self._partition
+
+    def offset(self) -> int:
+        return self._offset
+
+    def error(self) -> None:
+        return None
+
+
+class _LoopConsumer:
+    def __init__(self, message: Any, *, deliver_count: int, shutdown: _ShutdownFlag) -> None:
+        self._message = message
+        self._remaining = deliver_count
+        self._shutdown = shutdown
+        self.commits = 0
+        self.seeks: list[Any] = []
+
+    def subscribe(self, topics: Any, **kwargs: Any) -> None:
+        pass
+
+    def poll(self, timeout: float) -> Any:
+        if self._remaining <= 0:
+            self._shutdown.requested = True
+            return None
+        self._remaining -= 1
+        return self._message
+
+    def commit(self, message: Any, asynchronous: bool) -> None:
+        self.commits += 1
+
+    def seek(self, partition: Any) -> None:
+        self.seeks.append(partition)
+
+    def close(self) -> None:
+        pass
 
 
 @pytest.fixture(autouse=True)
@@ -84,43 +203,188 @@ def test_prediction_from_response_maps_fields() -> None:
 def test_fetch_prediction_returns_event_on_success() -> None:
     session = _FakeSession([_FakeResponse(200, _PREDICT_BODY)])
     result = _fetch_prediction(_cfg(), session, _event(), _ShutdownFlag())  # type: ignore[arg-type]
-    assert result is not None
-    assert result.fraud_score == pytest.approx(0.12)
+    assert result.outcome is FetchOutcome.OK
+    assert result.prediction is not None
+    assert result.prediction.fraud_score == pytest.approx(0.12)
     assert session.calls == 1
 
 
 def test_fetch_prediction_retries_then_succeeds_on_transient_error() -> None:
     session = _FakeSession([_FakeResponse(503), _FakeResponse(200, _PREDICT_BODY)])
     result = _fetch_prediction(_cfg(), session, _event(), _ShutdownFlag())  # type: ignore[arg-type]
-    assert result is not None
+    assert result.outcome is FetchOutcome.OK
+    assert session.calls == 2
+
+
+def test_fetch_prediction_retries_on_too_many_requests() -> None:
+    session = _FakeSession([_FakeResponse(429), _FakeResponse(200, _PREDICT_BODY)])
+    result = _fetch_prediction(_cfg(), session, _event(), _ShutdownFlag())  # type: ignore[arg-type]
+    assert result.outcome is FetchOutcome.OK
     assert session.calls == 2
 
 
 def test_fetch_prediction_retries_on_connection_error() -> None:
     session = _FakeSession([requests.ConnectionError("boom"), _FakeResponse(200, _PREDICT_BODY)])
     result = _fetch_prediction(_cfg(), session, _event(), _ShutdownFlag())  # type: ignore[arg-type]
-    assert result is not None
+    assert result.outcome is FetchOutcome.OK
     assert session.calls == 2
 
 
-def test_fetch_prediction_skips_on_client_rejection() -> None:
+def test_fetch_prediction_rejects_on_client_error() -> None:
     session = _FakeSession([_FakeResponse(422)])
     result = _fetch_prediction(_cfg(), session, _event(), _ShutdownFlag())  # type: ignore[arg-type]
-    assert result is None
+    assert result.outcome is FetchOutcome.REJECTED
     assert session.calls == 1
 
 
-def test_fetch_prediction_gives_up_after_max_retries() -> None:
+def test_fetch_prediction_unavailable_after_max_retries() -> None:
     session = _FakeSession([_FakeResponse(503)] * MAX_PREDICT_RETRIES)
     result = _fetch_prediction(_cfg(), session, _event(), _ShutdownFlag())  # type: ignore[arg-type]
-    assert result is None
+    assert result.outcome is FetchOutcome.UNAVAILABLE
     assert session.calls == MAX_PREDICT_RETRIES
 
 
-def test_fetch_prediction_stops_when_shutdown_requested() -> None:
+def test_fetch_prediction_aborts_when_shutdown_requested() -> None:
     shutdown = _ShutdownFlag()
     shutdown.requested = True
     session = _FakeSession([_FakeResponse(200, _PREDICT_BODY)])
     result = _fetch_prediction(_cfg(), session, _event(), shutdown)  # type: ignore[arg-type]
-    assert result is None
+    assert result.outcome is FetchOutcome.ABORTED
     assert session.calls == 0
+
+
+def _handle(
+    message: Any,
+    session: Any,
+    producer: Any,
+    consumer: Any,
+    breaker: _CircuitBreaker,
+) -> bool:
+    return _handle_message(message, _cfg(), session, producer, consumer, _ShutdownFlag(), breaker)
+
+
+def test_handle_message_publishes_prediction_and_commits_on_success() -> None:
+    producer, consumer = _FakeProducer(), _FakeConsumer()
+    session = _FakeSession([_FakeResponse(200, _PREDICT_BODY)])
+    committed = _handle(_FakeMessage(_payload()), session, producer, consumer, _breaker())
+    assert committed is True
+    assert consumer.commits == 1
+    assert producer.produced[0][0] == "predictions"
+    assert consumer.seeks == []
+
+
+def test_handle_message_routes_poison_to_dlq_and_commits() -> None:
+    producer, consumer = _FakeProducer(), _FakeConsumer()
+    message = _FakeMessage(b"not-json")
+    committed = _handle(message, _FakeSession([]), producer, consumer, _breaker())
+    assert committed is True
+    assert consumer.commits == 1
+    topic, _value, headers = producer.produced[0]
+    assert topic == "transactions-dlq"
+    assert ("reason", b"deserialize_error") in headers
+
+
+def test_handle_message_routes_rejected_to_dlq_and_commits() -> None:
+    producer, consumer = _FakeProducer(), _FakeConsumer()
+    session = _FakeSession([_FakeResponse(422)])
+    committed = _handle(_FakeMessage(_payload()), session, producer, consumer, _breaker())
+    assert committed is True
+    assert consumer.commits == 1
+    assert producer.produced[0][0] == "transactions-dlq"
+    assert ("reason", b"rejected") in producer.produced[0][2]
+
+
+def test_handle_message_treats_too_many_requests_as_retryable() -> None:
+    producer, consumer = _FakeProducer(), _FakeConsumer()
+    session = _FakeSession([_FakeResponse(429), _FakeResponse(200, _PREDICT_BODY)])
+    committed = _handle(_FakeMessage(_payload()), session, producer, consumer, _breaker())
+    assert committed is True
+    assert session.calls == 2
+    assert producer.produced[0][0] == "predictions"
+
+
+def test_handle_message_holds_offset_when_serving_unavailable() -> None:
+    producer, consumer = _FakeProducer(), _FakeConsumer()
+    session = _FakeSession([_FakeResponse(503)] * MAX_PREDICT_RETRIES)
+    breaker = _breaker()
+    committed = _handle(_FakeMessage(_payload()), session, producer, consumer, breaker)
+    assert committed is False
+    assert consumer.commits == 0
+    assert producer.produced == []
+    assert breaker.failures == 1
+
+
+def test_circuit_breaker_opens_after_threshold_and_resets_on_success() -> None:
+    breaker = _CircuitBreaker(threshold=2, cooldown_seconds=1.0)
+    breaker.record_failure()
+    one_failure = breaker.is_open
+    breaker.record_failure()
+    two_failures = breaker.is_open
+    breaker.record_success()
+    after_reset = breaker.is_open
+    assert (one_failure, two_failures, after_reset) == (False, True, False)
+
+
+def test_seek_back_rewinds_to_message_offset() -> None:
+    consumer = _FakeConsumer()
+    message = _FakeMessage(b"x", topic="transactions", partition=2, offset=42)
+    _seek_back(consumer, message)  # type: ignore[arg-type]
+    assert len(consumer.seeks) == 1
+    partition = consumer.seeks[0]
+    assert (partition.topic, partition.partition, partition.offset) == ("transactions", 2, 42)
+
+
+def test_handle_message_holds_offset_when_publish_unconfirmed() -> None:
+    producer, consumer = _FakeProducer(deliver=False), _FakeConsumer()
+    session = _FakeSession([_FakeResponse(200, _PREDICT_BODY)])
+    breaker = _breaker()
+    committed = _handle(_FakeMessage(_payload()), session, producer, consumer, breaker)
+    assert committed is False
+    assert consumer.commits == 0
+    assert breaker.failures == 1
+
+
+def test_handle_message_routes_empty_payload_to_dlq() -> None:
+    producer, consumer = _FakeProducer(), _FakeConsumer()
+    committed = _handle(_FakeMessage(None), _FakeSession([]), producer, consumer, _breaker())
+    assert committed is True
+    assert consumer.commits == 1
+    topic, _value, headers = producer.produced[0]
+    assert topic == "transactions-dlq"
+    assert ("reason", b"empty_payload") in headers
+
+
+def test_interruptible_sleep_returns_when_shutdown_requested(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sleeps: list[float] = []
+    monkeypatch.setattr(
+        "fraud.ingestion.consumer.time.sleep", lambda seconds: sleeps.append(seconds)
+    )
+    shutdown = _ShutdownFlag()
+    shutdown.requested = True
+    _interruptible_sleep(100.0, shutdown)
+    assert sleeps == []  # the flag short-circuits the loop before any sleep
+
+
+def test_run_consumer_holds_offset_and_paces_when_serving_down(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shutdown = _ShutdownFlag()
+    consumer = _LoopConsumer(_FakeMessage(_payload()), deliver_count=4, shutdown=shutdown)
+    producer = _FakeProducer()
+    session = _FakeSession([_FakeResponse(503)] * (MAX_PREDICT_RETRIES * 4))
+    cooldowns: list[float] = []
+    monkeypatch.setattr("fraud.ingestion.consumer._build_consumer", lambda cfg: consumer)
+    monkeypatch.setattr("fraud.ingestion.consumer.Producer", lambda cfg: producer)
+    monkeypatch.setattr("fraud.ingestion.consumer.requests.Session", lambda: session)
+    monkeypatch.setattr(
+        "fraud.ingestion.consumer._interruptible_sleep",
+        lambda seconds, _shutdown: cooldowns.append(seconds),
+    )
+
+    run_consumer(_cfg(), shutdown)
+
+    assert consumer.commits == 0
+    assert consumer.seeks
+    assert cooldowns

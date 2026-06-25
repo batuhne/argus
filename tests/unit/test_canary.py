@@ -5,6 +5,7 @@ import pytest
 from fraud.serving.canary import (
     CANARY_AGREEMENT_BREACH,
     CANARY_AUPRC_REGRESSION,
+    CANARY_AWAITING_QUALITY_SIGNAL,
     CANARY_ERROR_BREACH,
     CANARY_HOLD_EXHAUSTED,
     CANARY_INSUFFICIENT_SAMPLES,
@@ -83,6 +84,32 @@ def test_decide_step_rolls_back_on_decision_divergence() -> None:
 
 def test_decide_step_rolls_back_on_auprc_regression() -> None:
     decision = decide_step(GATES, _healthy(champion_auprc=0.2, canary_auprc=0.1), MIN_SAMPLES)
+    assert decision.action is CanaryAction.ROLLBACK
+    assert CANARY_AUPRC_REGRESSION in decision.breaches
+
+
+def test_decide_step_holds_full_promotion_until_labeled_auprc() -> None:
+    decision = decide_step(
+        GATES, _healthy(canary_auprc=None), MIN_SAMPLES, require_quality_signal=True
+    )
+    assert decision.action is CanaryAction.HOLD
+    assert decision.reason == CANARY_AWAITING_QUALITY_SIGNAL
+
+
+def test_decide_step_promotes_full_traffic_once_labeled_auprc_clears_gate() -> None:
+    decision = decide_step(
+        GATES, _healthy(canary_auprc=0.1), MIN_SAMPLES, require_quality_signal=True
+    )
+    assert decision.action is CanaryAction.PROMOTE
+
+
+def test_decide_step_full_promotion_still_rolls_back_on_auprc_regression() -> None:
+    decision = decide_step(
+        GATES,
+        _healthy(champion_auprc=0.2, canary_auprc=0.1),
+        MIN_SAMPLES,
+        require_quality_signal=True,
+    )
     assert decision.action is CanaryAction.ROLLBACK
     assert CANARY_AUPRC_REGRESSION in decision.breaches
 
@@ -186,4 +213,40 @@ def test_run_canary_rolls_back_when_holds_exhausted() -> None:
     assert not outcome.promoted
     assert outcome.reason == CANARY_HOLD_EXHAUSTED
     assert rollbacks == [CANARY_HOLD_EXHAUSTED]
+    assert weights[-1] == 0.0
+
+
+def test_run_canary_holds_final_step_until_labels_then_promotes() -> None:
+    weights, rollbacks, promotes = _recorder()
+    # 5% step ramps on the online signal, but full traffic waits for a labeled AUPRC.
+    observe = _step_sequence([_healthy(canary_auprc=None), _healthy(canary_auprc=None), _healthy()])
+    outcome = run_canary(
+        CanaryRamp((0.05, 1.0)),
+        GATES,
+        observe=observe,
+        apply_weight=weights.append,
+        on_promote=lambda: promotes.append(True),
+        on_rollback=rollbacks.append,
+        min_samples=MIN_SAMPLES,
+        max_holds_per_step=3,
+    )
+    assert outcome.promoted
+    assert weights == [0.05, 1.0, 1.0]
+
+
+def test_run_canary_rolls_back_when_full_traffic_never_gets_labels() -> None:
+    weights, rollbacks, promotes = _recorder()
+    outcome = run_canary(
+        CanaryRamp((0.05, 1.0)),
+        GATES,
+        observe=lambda _i, _w: _healthy(canary_auprc=None),
+        apply_weight=weights.append,
+        on_promote=lambda: promotes.append(True),
+        on_rollback=rollbacks.append,
+        min_samples=MIN_SAMPLES,
+        max_holds_per_step=2,
+    )
+    assert not outcome.promoted
+    assert outcome.reason == CANARY_HOLD_EXHAUSTED
+    assert promotes == []
     assert weights[-1] == 0.0

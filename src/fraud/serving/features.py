@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import os
-import socket
 
 import pandas as pd
+import redis
 from feast import FeatureStore
 
 from fraud.ingestion.stream import RawAttributes
@@ -55,10 +55,16 @@ def assemble_features(
 
 
 def redis_reachable(cfg: ServingConfig) -> bool:
+    # PING, not a bare connect: a port open but not answering commands is not ready.
+    client = redis.Redis(
+        host=cfg.redis_host,
+        port=cfg.redis_port,
+        socket_connect_timeout=REDIS_PROBE_TIMEOUT_SECONDS,
+        socket_timeout=REDIS_PROBE_TIMEOUT_SECONDS,
+    )
     try:
-        with socket.create_connection(
-            (cfg.redis_host, cfg.redis_port), timeout=REDIS_PROBE_TIMEOUT_SECONDS
-        ):
-            return True
-    except OSError:
+        return bool(client.ping())
+    except (OSError, redis.RedisError):
         return False
+    finally:
+        client.close()

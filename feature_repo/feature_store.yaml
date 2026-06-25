@@ -5,5 +5,6 @@ offline_store:
   type: file
 online_store:
   type: redis
-  connection_string: ${ARGUS_REDIS_CONNECTION}
+  # Bound connect and read so a stalled Redis fails the fetch fast instead of pinning a worker.
+  connection_string: ${ARGUS_REDIS_CONNECTION},socket_connect_timeout=1.0,socket_timeout=2.0
 entity_key_serialization_version: 3

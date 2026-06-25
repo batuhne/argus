@@ -18,6 +18,8 @@ class ServingConfig:
     feast_repo_dir: Path
     redis_host: str
     redis_port: int
+    request_timeout_seconds: int
+    load_deadline_seconds: float
 
     @classmethod
     def from_settings(cls) -> ServingConfig:
@@ -30,6 +32,8 @@ class ServingConfig:
             feast_repo_dir=FEATURE_REPO_DIR,
             redis_host=settings.redis_host,
             redis_port=settings.redis_port,
+            request_timeout_seconds=settings.mlflow_request_timeout_seconds,
+            load_deadline_seconds=settings.model_load_deadline_seconds,
         )
 
     @property

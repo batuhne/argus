@@ -81,6 +81,7 @@ canary:
   min_auprc_ratio: 0.98
   min_agreement: 0.95
   min_samples: 500
+  # holds at full traffic wait for a labeled AUPRC, so keep this above the label-lag horizon
   max_holds_per_step: 3
 
 stream:

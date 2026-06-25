@@ -12,6 +12,7 @@ CANARY_LATENCY_BREACH = "latency_breach"
 CANARY_ERROR_BREACH = "error_rate_breach"
 CANARY_AGREEMENT_BREACH = "agreement_breach"
 CANARY_AUPRC_REGRESSION = "auprc_regression"
+CANARY_AWAITING_QUALITY_SIGNAL = "awaiting_quality_signal"
 CANARY_HOLD_EXHAUSTED = "hold_exhausted"
 
 
@@ -73,8 +74,14 @@ class CanaryOutcome:
     history: tuple[StepDecision, ...]
 
 
-def decide_step(gates: CanaryGates, obs: CanaryObservation, min_samples: int) -> StepDecision:
-    """A latency or error breach rolls back immediately; quality is judged once warm."""
+def decide_step(
+    gates: CanaryGates,
+    obs: CanaryObservation,
+    min_samples: int,
+    *,
+    require_quality_signal: bool = False,
+) -> StepDecision:
+    """A latency or error breach rolls back immediately; full promotion needs a labeled AUPRC."""
     slo_breaches = _slo_breaches(gates, obs)
     if slo_breaches:
         return StepDecision(CanaryAction.ROLLBACK, slo_breaches[0], slo_breaches)
@@ -83,6 +90,8 @@ def decide_step(gates: CanaryGates, obs: CanaryObservation, min_samples: int) ->
     quality_breaches = _quality_breaches(gates, obs)
     if quality_breaches:
         return StepDecision(CanaryAction.ROLLBACK, quality_breaches[0], quality_breaches)
+    if require_quality_signal and obs.canary_auprc is None:
+        return StepDecision(CanaryAction.HOLD, CANARY_AWAITING_QUALITY_SIGNAL, ())
     return StepDecision(CanaryAction.PROMOTE, CANARY_OK, ())
 
 
@@ -129,7 +138,12 @@ def run_canary(
     while True:
         weight = ramp.weight(step_index)
         apply_weight(weight)
-        decision = decide_step(gates, observe(step_index, weight), min_samples)
+        decision = decide_step(
+            gates,
+            observe(step_index, weight),
+            min_samples,
+            require_quality_signal=ramp.is_final(step_index),
+        )
         state.history.append(decision)
 
         if decision.action is CanaryAction.ROLLBACK:

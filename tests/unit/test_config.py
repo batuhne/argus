@@ -12,6 +12,10 @@ def test_get_settings_is_cached() -> None:
     assert get_settings() is get_settings()
 
 
+def test_serving_api_key_defaults_to_none() -> None:
+    assert Settings.model_fields["serving_api_key"].default is None
+
+
 def test_bootstrap_default_lists_every_broker() -> None:
     # The code default, not a .env override.
     default = Settings.model_fields["kafka_bootstrap_servers"].default

@@ -1,15 +1,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Annotated
 
 import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from fraud.config import get_settings
 
 SECONDS_PER_DAY = 86400.0
+
+# Abuse bounds on the request contract: a request past these is malformed, not a sale.
+MAX_TRANSACTION_AMOUNT = 1_000_000.0
+MAX_RAW_VECTOR_ENTRIES = 256
+MAX_CATEGORICAL_VALUE_LENGTH = 256
 
 TRANSACTIONS_TOPIC = "transactions"
 PREDICTIONS_TOPIC = "predictions"
@@ -30,10 +36,12 @@ class StreamConfig:
     dlq_topic: str
     consumer_group: str
     predict_url: str
+    predict_api_key: str | None = None
 
     @classmethod
     def from_settings(cls) -> StreamConfig:
         settings = get_settings()
+        api_key = settings.serving_api_key
         return cls(
             bootstrap_servers=settings.kafka_bootstrap_servers,
             transactions_topic=TRANSACTIONS_TOPIC,
@@ -41,6 +49,7 @@ class StreamConfig:
             dlq_topic=DLQ_TOPIC,
             consumer_group=CONSUMER_GROUP,
             predict_url=settings.serving_predict_url,
+            predict_api_key=api_key.get_secret_value() if api_key is not None else None,
         )
 
 
@@ -84,16 +93,18 @@ class RawAttributes(BaseModel):
     addr2: float | None = None
     # The reduced V set is frozen at selection time, so it rides as a dict keyed by name
     # rather than fixed fields; serving reindexes it to feature_logic.V_SELECTED.
-    v: dict[str, float | None] = Field(default_factory=dict)
+    v: dict[str, float | None] = Field(default_factory=dict, max_length=MAX_RAW_VECTOR_ENTRIES)
     # Curated categoricals ride the same way; serving reindexes them to CATEGORICAL_COLUMNS
     # and the encoder turns them into features.
-    categorical: dict[str, str | None] = Field(default_factory=dict)
+    categorical: dict[
+        str, Annotated[str, StringConstraints(max_length=MAX_CATEGORICAL_VALUE_LENGTH)] | None
+    ] = Field(default_factory=dict, max_length=MAX_RAW_VECTOR_ENTRIES)
 
 
 class TransactionEvent(BaseModel):
     transaction_id: str = Field(min_length=1, max_length=128)
     card_id: str = Field(min_length=1, max_length=128)
-    amount: float = Field(gt=0.0)
+    amount: float = Field(gt=0.0, le=MAX_TRANSACTION_AMOUNT)
     event_timestamp: str
     raw: RawAttributes = Field(default_factory=RawAttributes)
 

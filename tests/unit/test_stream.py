@@ -3,6 +3,9 @@ import pytest
 from pydantic import ValidationError
 
 from fraud.ingestion.stream import (
+    MAX_CATEGORICAL_VALUE_LENGTH,
+    MAX_RAW_VECTOR_ENTRIES,
+    MAX_TRANSACTION_AMOUNT,
     DriftAlertEvent,
     LabelEvent,
     PredictionEvent,
@@ -106,6 +109,26 @@ def test_transaction_event_rejects_empty_card_id() -> None:
         TransactionEvent(
             transaction_id="t-1", card_id="", amount=1.0, event_timestamp="2017-12-01T00:00:00"
         )
+
+
+def test_transaction_event_rejects_amount_above_cap() -> None:
+    with pytest.raises(ValidationError):
+        TransactionEvent(
+            transaction_id="t-1",
+            card_id="c",
+            amount=MAX_TRANSACTION_AMOUNT + 1.0,
+            event_timestamp="2017-12-01T00:00:00",
+        )
+
+
+def test_raw_attributes_rejects_oversized_categorical_value() -> None:
+    with pytest.raises(ValidationError):
+        RawAttributes(categorical={"ProductCD": "W" * (MAX_CATEGORICAL_VALUE_LENGTH + 1)})
+
+
+def test_raw_attributes_rejects_too_many_vector_entries() -> None:
+    with pytest.raises(ValidationError):
+        RawAttributes(v={f"V{i}": 1.0 for i in range(MAX_RAW_VECTOR_ENTRIES + 1)})
 
 
 def test_deserialize_rejects_malformed_payload() -> None:

@@ -47,6 +47,35 @@ groups:
           summary: "Serving p99 latency above the 50ms budget"
           description: "Request duration p99 exceeds the latency SLO."
 
+      # Auth rejections are 4xx, so the burn alerts above miss them: a wrong or rotated key
+      # rejects the caller and no transaction is scored, yet the error budget stays green.
+      - alert: ServingAuthRejections
+        expr: |
+          (
+            sum(rate(bentoml_service_request_total{http_response_code=~"401|403"}[5m]))
+            / sum(rate(bentoml_service_request_total[5m]))
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Serving is rejecting requests on auth"
+          description: "Over 5% of requests are 401/403; the caller's API key is likely wrong."
+
+      # Sustained 429s mean the per-replica concurrency cap is shedding load: scale out.
+      - alert: ServingLoadShedding
+        expr: |
+          (
+            sum(rate(bentoml_service_request_total{http_response_code="429"}[5m]))
+            / sum(rate(bentoml_service_request_total[5m]))
+          ) > 0.01
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Serving is shedding load"
+          description: "Requests are being rejected with 429; add replicas to absorb demand."
+
   - name: model_health
     rules:
       - alert: FeatureDriftDetected

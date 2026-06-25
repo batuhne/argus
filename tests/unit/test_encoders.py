@@ -100,6 +100,33 @@ def test_keys_are_stable_across_int_and_float_spelling() -> None:
     assert out["code_freq"].iloc[1] == pytest.approx(0.25)  # code 2 seen 1 of 4
 
 
+def test_fractional_float_categories_stay_distinct_without_crashing() -> None:
+    # A categorical that arrives as a fractional float must not crash the int cast, and 13.5
+    # must stay a different category from 13.0 (which collapses to the "13" spelling).
+    frame = pd.DataFrame({"code": [13.5, 13.0, 13.0, 13.0], LABEL_COLUMN: [0, 1, 0, 1]})
+
+    encoder = fit_encoder(frame, ["code"], LABEL_COLUMN, smoothing=0.0)
+    out = encoder.transform(frame)
+
+    assert set(encoder.frequency_maps["code"]) == {"13", "13.5"}
+    assert out["code_freq"].iloc[0] == pytest.approx(0.25)  # 13.5 seen 1 of 4
+    assert out["code_freq"].iloc[1] == pytest.approx(0.75)  # 13.0 -> "13" seen 3 of 4
+
+
+def test_non_finite_and_out_of_range_floats_do_not_crash_the_int_cast() -> None:
+    # inf and floats past the int64 range have no integer spelling; they become their own
+    # string category rather than raising in the cast.
+    frame = pd.DataFrame(
+        {"code": [float("inf"), float("-inf"), 1e19, 7.0], LABEL_COLUMN: [0, 1, 0, 1]}
+    )
+
+    encoder = fit_encoder(frame, ["code"], LABEL_COLUMN, smoothing=0.0)
+    out = encoder.transform(frame)
+
+    assert set(encoder.frequency_maps["code"]) == {"inf", "-inf", "1e+19", "7"}
+    assert out["code_freq"].notna().all()
+
+
 def test_out_of_fold_preserves_a_non_default_index() -> None:
     frame = _singleton_frame()
     frame.index = pd.RangeIndex(100, 140)

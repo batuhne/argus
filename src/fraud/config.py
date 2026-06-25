@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     # All three broker ports, so a host client still connects when one broker is down.
     kafka_bootstrap_servers: str = "localhost:19092,localhost:29092,localhost:39092"
     serving_predict_url: str = "http://localhost:3001/predict"
+    # When set, /predict requires this bearer token; unset leaves the endpoint open for local dev.
+    serving_api_key: SecretStr | None = None
     monitoring_exporter_port: int = 8000
     redis_host: str = "localhost"
     redis_port: int = 6379

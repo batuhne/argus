@@ -19,7 +19,7 @@ from fraud.ingestion.consumer import (
 from fraud.ingestion.stream import StreamConfig, TransactionEvent, serialize
 
 
-def _cfg() -> StreamConfig:
+def _cfg(predict_api_key: str | None = None) -> StreamConfig:
     return StreamConfig(
         bootstrap_servers="localhost:19092",
         transactions_topic="transactions",
@@ -27,6 +27,7 @@ def _cfg() -> StreamConfig:
         dlq_topic="transactions-dlq",
         consumer_group="argus-fraud-consumer",
         predict_url="http://localhost:3000/predict",
+        predict_api_key=predict_api_key,
     )
 
 
@@ -63,8 +64,10 @@ class _FakeSession:
     def __init__(self, responses: list[_FakeResponse | Exception]) -> None:
         self._responses = responses
         self.calls = 0
+        self.headers: Any = None
 
-    def post(self, url: str, json: Any, timeout: float) -> _FakeResponse:
+    def post(self, url: str, json: Any, timeout: float, headers: Any = None) -> _FakeResponse:
+        self.headers = headers
         response = self._responses[self.calls]
         self.calls += 1
         if isinstance(response, Exception):
@@ -251,6 +254,28 @@ def test_fetch_prediction_aborts_when_shutdown_requested() -> None:
     result = _fetch_prediction(_cfg(), session, _event(), shutdown)  # type: ignore[arg-type]
     assert result.outcome is FetchOutcome.ABORTED
     assert session.calls == 0
+
+
+def test_fetch_prediction_sends_bearer_header_when_key_set() -> None:
+    session = _FakeSession([_FakeResponse(200, _PREDICT_BODY)])
+    cfg = _cfg(predict_api_key="secret")
+    _fetch_prediction(cfg, session, _event(), _ShutdownFlag())  # type: ignore[arg-type]
+    assert session.headers == {"Authorization": "Bearer secret"}
+
+
+def test_fetch_prediction_omits_auth_header_when_no_key() -> None:
+    session = _FakeSession([_FakeResponse(200, _PREDICT_BODY)])
+    _fetch_prediction(_cfg(), session, _event(), _ShutdownFlag())  # type: ignore[arg-type]
+    assert session.headers == {}
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_fetch_prediction_holds_without_dlq_on_auth_failure(status: int) -> None:
+    # A wrong key must not dead-letter valid transactions; it holds for a fixed key to replay.
+    session = _FakeSession([_FakeResponse(status)])
+    result = _fetch_prediction(_cfg(), session, _event(), _ShutdownFlag())  # type: ignore[arg-type]
+    assert result.outcome is FetchOutcome.UNAVAILABLE
+    assert session.calls == 1
 
 
 def _handle(

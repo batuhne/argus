@@ -136,10 +136,16 @@ def _require_enough_per_class(y: pd.Series, n_splits: int) -> None:
 
 
 def _as_keys(values: pd.Series) -> pd.Series:
-    # Route numerics through Int64 first so "13" and "13.0" hash to the same category. One
-    # stray NaN at fit time upcasts the column to float, and then train and serve disagree.
+    # Whole-valued numerics take their integer spelling so "13" and "13.0" hash to one category
+    # (a stray NaN upcasts a column to float, so int and float must agree). Genuinely fractional
+    # values keep their own spelling instead of crashing the int cast.
     if pd.api.types.is_integer_dtype(values) or pd.api.types.is_float_dtype(values):
-        keys = values.astype("Int64").astype("string")
+        rounded = values.round()
+        # inf and values past the int64 range cannot take an integer spelling; leave them as
+        # their own string so the int cast (applied only to whole, in-range values) never raises.
+        integral = np.isfinite(values) & values.eq(rounded) & values.abs().lt(2**63)
+        int_spelling = rounded.where(integral).astype("Int64").astype("string")
+        keys = values.astype("string").mask(integral, int_spelling)
     else:
         keys = values.astype("string")
     return keys.where(values.notna(), MISSING).astype(str)

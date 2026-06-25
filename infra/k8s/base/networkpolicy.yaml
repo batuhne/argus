@@ -19,8 +19,14 @@ spec:
       argus.io/app: serving
   policyTypes: ["Ingress", "Egress"]
   ingress:
+    # Only the ingress controller (Traefik, in kube-system on k3d) reaches the predict port,
+    # fronting both live and mirrored traffic. NOT probe-safe under a policy-enforcing CNI
+    # (Calico, Cilium): kubelet livez/readyz come from the node, so those clusters must add a
+    # node-CIDR ipBlock for port 3001. The bearer token gates predict regardless.
     - from:
-        - namespaceSelector: {}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
       ports:
         - protocol: TCP
           port: 3001

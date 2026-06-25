@@ -34,6 +34,8 @@ BACKOFF_JITTER_SECONDS = 0.3
 CLIENT_ERROR_START = 400
 SERVER_ERROR_START = 500
 TOO_MANY_REQUESTS = 429
+UNAUTHORIZED = 401
+FORBIDDEN = 403
 CIRCUIT_BREAKER_THRESHOLD = 3
 CIRCUIT_COOLDOWN_SECONDS = 10.0
 SHUTDOWN_POLL_SECONDS = 0.5
@@ -213,11 +215,14 @@ def _fetch_prediction(
 ) -> PredictionResult:
     """Bounded retries: a 4xx (except 429) is a permanent reject, 5xx and 429 are retried."""
     body = predict_request_body(event)
+    headers = _auth_headers(cfg)
     for attempt in range(1, max_attempts + 1):
         if shutdown.requested:
             return PredictionResult(FetchOutcome.ABORTED)
         try:
-            response = session.post(cfg.predict_url, json=body, timeout=PREDICT_TIMEOUT_SECONDS)
+            response = session.post(
+                cfg.predict_url, json=body, headers=headers, timeout=PREDICT_TIMEOUT_SECONDS
+            )
         except requests.RequestException as exc:
             log.warning("predict_call_failed", attempt=attempt, error=str(exc))
             _backoff(attempt)
@@ -230,6 +235,11 @@ def _fetch_prediction(
             log.warning("predict_unavailable", status=response.status_code, attempt=attempt)
             _backoff(attempt)
             continue
+        if response.status_code in (UNAUTHORIZED, FORBIDDEN):
+            # An auth failure is our own misconfiguration, not a poison payload; hold the message
+            # so a fixed key replays it instead of dead-lettering a stream of valid transactions.
+            log.error("predict_auth_rejected", status=response.status_code)
+            return PredictionResult(FetchOutcome.UNAVAILABLE)
         log.warning(
             "predict_rejected", status=response.status_code, transaction_id=event.transaction_id
         )
@@ -241,6 +251,12 @@ def _fetch_prediction(
 
 def _is_retryable_status(status_code: int) -> bool:
     return status_code >= SERVER_ERROR_START or status_code == TOO_MANY_REQUESTS
+
+
+def _auth_headers(cfg: StreamConfig) -> dict[str, str]:
+    if cfg.predict_api_key is None:
+        return {}
+    return {"Authorization": f"Bearer {cfg.predict_api_key}"}
 
 
 def predict_request_body(event: TransactionEvent) -> dict[str, dict[str, Any]]:

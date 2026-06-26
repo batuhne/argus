@@ -30,6 +30,14 @@ spec:
       ports:
         - protocol: TCP
           port: 3001
+    # The in-cluster consumer reaches /predict pod-to-pod, not through the ingress controller.
+    - from:
+        - podSelector:
+            matchLabels:
+              argus.io/app: consumer
+      ports:
+        - protocol: TCP
+          port: 3001
   egress:
     - ports:
         - protocol: UDP
@@ -45,3 +53,26 @@ spec:
           port: 5000
         - protocol: TCP
           port: 9000
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: consumer-allow
+spec:
+  podSelector:
+    matchLabels:
+      argus.io/app: consumer
+  policyTypes: ["Ingress", "Egress"]
+  # Egress only; listing Ingress with no rules denies all inbound.
+  egress:
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Port 3001 is serving's pod port (the Service maps :80 to it before the policy is applied).
+    - ports:
+        - protocol: TCP
+          port: 3001
+        - protocol: TCP
+          port: 9092

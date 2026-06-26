@@ -1,0 +1,45 @@
+# Keep the build context small and free of secrets. The image copies only
+# pyproject.toml, uv.lock, src, params.yaml, and feature_repo/v_selected.json.
+.git
+.github
+.dockerignore
+
+# Virtualenv and tool caches
+.venv
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Data, models, and experiment artifacts
+data/
+mlruns/
+mlartifacts/
+artifacts/
+dvcstore/
+feature_repo/data/
+*.parquet
+*.pkl
+*.joblib
+*.db
+
+# Secrets and local environment
+.env
+**/secret.env
+
+# Tests, docs, notebooks
+tests/
+docs/
+*.ipynb
+.ipynb_checkpoints/
+
+# OS and editor
+.DS_Store
+.idea/
+.vscode/
+.claude/
+*.log

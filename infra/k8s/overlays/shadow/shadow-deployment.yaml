@@ -27,7 +27,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: serving
-          image: ghcr.io/argus/argus:candidate
+          image: argus-app
           args:
             - bentoml
             - serve

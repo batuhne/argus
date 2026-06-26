@@ -286,12 +286,6 @@ services:
       - ../feature_repo:/app/feature_repo:ro
     ports:
       - "3001:3001"
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:3001/readyz').status==200 else 1)"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 40s
 
   # Single replica: the join and PSI windows are in memory, so a second instance would split
   # them across partitions. Scaling it needs that state in a shared store first.
@@ -345,3 +339,6 @@ services:
       SERVING_PREDICT_URL: http://serving:3001/predict
       SERVING_API_KEY: ${SERVING_API_KEY:-argus-local-dev-key}
     command: ["python", "-m", "fraud.ingestion.consumer"]
+    # The image healthcheck probes serving readiness, which the consumer lacks.
+    healthcheck:
+      disable: true

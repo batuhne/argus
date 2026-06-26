@@ -52,6 +52,9 @@ pipeline = [
 
 [tool.uv]
 default-groups = ["dev", "pipeline"]
+# xgboost pulls the CUDA/NCCL libs on Linux, but serving and training run on CPU,
+# so drop the 286MB wheel with a marker that is never satisfied.
+override-dependencies = ["nvidia-nccl-cu12 ; sys_platform == 'never'"]
 
 [[tool.mypy.overrides]]
 module = ["xgboost.*", "lightgbm.*", "catboost.*", "optuna.*", "shap.*", "matplotlib.*", "sklearn.*", "joblib.*", "evidently.*", "pyarrow.*"]

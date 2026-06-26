@@ -38,16 +38,16 @@ jobs:
           images: ${{ env.IMAGE }}
           tags: |
             type=sha
-            type=ref,event=branch
+            type=raw,value=candidate,enable={{is_default_branch}}
             type=semver,pattern={{version}}
-            type=raw,value=latest,enable={{is_default_branch}}
-      - name: Build image for scanning
+      - name: Build image once for scanning
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: infra/docker/app.Dockerfile
           load: true
           tags: ${{ env.SCAN_TAG }}
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Scan image for fixable vulnerabilities
@@ -58,12 +58,14 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
-      - name: Push image
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: .
-          file: infra/docker/app.Dockerfile
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
+      - name: Push the scanned image
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+            docker tag "$SCAN_TAG" "$tag"
+            docker push "$tag"
+          done <<< "$TAGS"
+          first=$(printf '%s\n' "$TAGS" | head -n1)
+          echo "Pushed scanned image: $(docker inspect --format '{{index .RepoDigests 0}}' "$first")" >> "$GITHUB_STEP_SUMMARY"

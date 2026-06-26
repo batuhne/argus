@@ -6,3 +6,9 @@ resources:
   - ../../base
   - canary-deployment.yaml
   - weighted-route.yaml
+
+# Track the candidate tag.
+images:
+  - name: argus-app
+    newName: ghcr.io/batuhne/argus
+    newTag: candidate

@@ -8,6 +8,7 @@ data:
   MLFLOW_TRACKING_URI: "http://mlflow:5000"
   MLFLOW_S3_ENDPOINT_URL: "http://minio:9000"
   KAFKA_BOOTSTRAP_SERVERS: "redpanda:9092"
+  SERVING_PREDICT_URL: "http://serving/predict"
   REDIS_HOST: "redis"
   REDIS_PORT: "6379"
   ARGUS_REDIS_CONNECTION: "redis:6379"

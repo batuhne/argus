@@ -6,13 +6,27 @@ the same manifests apply to a managed cluster.
 
 ## Layout
 
-- `base/` - serving Deployment (probes, resource limits, non-root, read-only
-  root), Service, dedicated ServiceAccount with no API access, default-deny
-  NetworkPolicy plus an explicit allow, and an HPA.
+- `base/` - serving Deployment, a consumer Deployment that calls `/predict` with
+  the bearer token, Service, dedicated ServiceAccounts with no API access,
+  default-deny NetworkPolicy plus explicit allows, and an HPA. Every workload
+  runs non-root with a read-only root filesystem and probes where it serves.
 - `overlays/shadow/` - a `serving-shadow` running the candidate that receives
   100% mirrored traffic with zero user impact.
 - `overlays/canary/` - a `serving-canary` behind a weighted route, starting at
   5% of real traffic.
+
+## Image tags
+
+The registry path is set once, in `base/kustomization.yaml`. Base pins serving and
+the consumer to `:stable`; the shadow and canary overlays override only the tag to
+`:candidate`. The `docker-build` workflow builds and scans each push to `main`, then
+pushes the scanned image as the floating `:candidate` plus an immutable `sha-<commit>`
+tag. The `promote` workflow takes the `sha-<commit>` that passed canary and points
+`:stable` at its digest, so `:stable` is pinned to the exact bits that were validated.
+
+`:stable` exists only after the first promote, so a fresh cluster must run `promote`
+once (with a known-good `sha-<commit>`) before `kubectl apply -k base`; the overlays
+include base and need it too. Roll back the same way: promote a prior `sha-<commit>`.
 
 ## Render and validate
 

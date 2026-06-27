@@ -16,23 +16,33 @@ groups:
         for: 2m
         labels:
           severity: critical
+          service: serving
         annotations:
           summary: "Serving is burning the error budget fast"
           description: "5xx ratio exceeds 14.4x the 99.9% availability budget."
+          runbook_url: "https://github.com/batuhne/argus/blob/main/docs/runbooks.md#serving-error-budget-burn"
 
-      # Slow burn: sustained error rate above the 0.1% SLO.
+      # Slow burn: 6x the budget over both 6h and 30m, so a sustained but sub-page error
+      # rate still raises a ticket without the 1x rule firing on every transient blip.
       - alert: ServingSlowErrorBudgetBurn
         expr: |
           (
             sum(rate(bentoml_service_request_total{http_response_code=~"5.."}[6h]))
             / sum(rate(bentoml_service_request_total[6h]))
-          ) > 0.001
+          ) > 0.006
+          and
+          (
+            sum(rate(bentoml_service_request_total{http_response_code=~"5.."}[30m]))
+            / sum(rate(bentoml_service_request_total[30m]))
+          ) > 0.006
         for: 15m
         labels:
           severity: warning
+          service: serving
         annotations:
-          summary: "Serving error rate above the 0.1% SLO"
-          description: "Sustained 5xx ratio is consuming the error budget."
+          summary: "Serving error rate is burning the budget slowly"
+          description: "5xx ratio exceeds 6x the 99.9% budget over 6h and 30m."
+          runbook_url: "https://github.com/batuhne/argus/blob/main/docs/runbooks.md#serving-error-budget-burn"
 
       - alert: ServingLatencySLOBreach
         expr: |
@@ -43,9 +53,11 @@ groups:
         for: 5m
         labels:
           severity: warning
+          service: serving
         annotations:
           summary: "Serving p99 latency above the 50ms budget"
           description: "Request duration p99 exceeds the latency SLO."
+          runbook_url: "https://github.com/batuhne/argus/blob/main/docs/runbooks.md#serving-latency-slo-breach"
 
       # Auth rejections are 4xx, so the burn alerts above miss them: a wrong or rotated key
       # rejects the caller and no transaction is scored, yet the error budget stays green.
@@ -58,9 +70,11 @@ groups:
         for: 5m
         labels:
           severity: critical
+          service: serving
         annotations:
           summary: "Serving is rejecting requests on auth"
           description: "Over 5% of requests are 401/403; the caller's API key is likely wrong."
+          runbook_url: "https://github.com/batuhne/argus/blob/main/docs/runbooks.md#serving-auth-rejections"
 
       # Sustained 429s mean the per-replica concurrency cap is shedding load: scale out.
       - alert: ServingLoadShedding
@@ -72,9 +86,44 @@ groups:
         for: 10m
         labels:
           severity: warning
+          service: serving
         annotations:
           summary: "Serving is shedding load"
           description: "Requests are being rejected with 429; add replicas to absorb demand."
+          runbook_url: "https://github.com/batuhne/argus/blob/main/docs/runbooks.md#serving-load-shedding"
+
+      # Isolates the Redis online-store read: a slow but reachable Redis blows the request
+      # budget without failing the readiness PING, so surface it before the whole request.
+      - alert: ServingFeatureFetchSlow
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum(rate(argus_feature_fetch_seconds_bucket[5m])) by (le)
+          ) > 0.025
+        for: 5m
+        labels:
+          severity: warning
+          service: serving
+        annotations:
+          summary: "Feature fetch p99 above 25ms"
+          description: "The online feature read is slow; Redis latency is eroding the request budget."
+          runbook_url: "https://github.com/batuhne/argus/blob/main/docs/runbooks.md#serving-feature-fetch"
+
+      - alert: ServingFeatureFetchErrors
+        expr: |
+          (
+            sum(rate(argus_feature_fetch_errors_total[5m]))
+            / clamp_min(sum(rate(argus_feature_fetch_seconds_count[5m])), 1e-9)
+          ) > 0.01
+          and sum(rate(argus_feature_fetch_seconds_count[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          service: serving
+        annotations:
+          summary: "Feature fetch is erroring"
+          description: "Over 1% of online feature reads are failing; check Redis."
+          runbook_url: "https://github.com/batuhne/argus/blob/main/docs/runbooks.md#serving-feature-fetch"
 
   - name: model_health
     rules:
@@ -83,9 +132,11 @@ groups:
         for: 1m
         labels:
           severity: warning
+          service: model
         annotations:
           summary: "Model-input feature drift detected"
           description: "A feature PSI is above 0.2 versus the training baseline."
+          runbook_url: "https://github.com/batuhne/argus/blob/main/docs/runbooks.md#feature-drift-detected"
 
       # Threshold mirrors monitoring.auprc_floor in params.yaml; keep the two in sync.
       - alert: ModelPerformanceDecay
@@ -93,6 +144,50 @@ groups:
         for: 5m
         labels:
           severity: critical
+          service: model
         annotations:
           summary: "Rolling AUPRC below the floor"
           description: "Concept drift or performance decay on labeled predictions."
+          runbook_url: "https://github.com/batuhne/argus/blob/main/docs/runbooks.md#model-performance-decay"
+
+  - name: monitor_health
+    rules:
+      - alert: MonitorExporterDown
+        expr: up{job="argus-monitoring"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: monitor
+        annotations:
+          summary: "Monitoring exporter is down"
+          description: "Prometheus cannot scrape the monitor; ML health metrics are stale."
+          runbook_url: "https://github.com/batuhne/argus/blob/main/docs/runbooks.md#monitor-exporter-down-or-stalled"
+
+      # The exporter rebuilds from the log and never commits offsets, so this lag-proxy
+      # replaces the usual consumer-lag signal. Gated on live ingest so a finished replay
+      # (clock frozen, no new events) reads as idle rather than as a stall.
+      - alert: MonitorJoinClockStalled
+        expr: |
+          argus_monitor_join_clock_lag_seconds > 600
+          and sum(rate(argus_scored_events_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: monitor
+        annotations:
+          summary: "Monitor join clock is falling behind live ingest"
+          description: "Events are flowing but the join clock lags wall-clock by over 10m."
+          runbook_url: "https://github.com/batuhne/argus/blob/main/docs/runbooks.md#monitor-exporter-down-or-stalled"
+
+      # up==0 misses a process that is still scrapable but whose consume loop has wedged: the
+      # recompute timestamp stops advancing while the frozen lag gauge would not surface it.
+      - alert: MonitorRecomputeStalled
+        expr: time() - argus_monitor_last_recompute_timestamp_seconds > 60
+        for: 2m
+        labels:
+          severity: warning
+          service: monitor
+        annotations:
+          summary: "Monitor recompute loop has stalled"
+          description: "No metrics recompute in over 60s; the consume loop may be wedged."
+          runbook_url: "https://github.com/batuhne/argus/blob/main/docs/runbooks.md#monitor-exporter-down-or-stalled"

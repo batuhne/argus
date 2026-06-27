@@ -4,7 +4,10 @@ import random
 import signal
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from enum import StrEnum
+from pathlib import Path
 from types import FrameType
 from typing import Any
 
@@ -40,6 +43,8 @@ CIRCUIT_BREAKER_THRESHOLD = 3
 CIRCUIT_COOLDOWN_SECONDS = 10.0
 SHUTDOWN_POLL_SECONDS = 0.5
 FLUSH_TIMEOUT_SECONDS = 10.0
+# Touched each poll cycle; a k8s exec probe restarts the pod if it goes stale (wedged poll).
+HEARTBEAT_PATH = Path("/tmp/consumer-alive")
 
 
 class FetchOutcome(StrEnum):
@@ -80,7 +85,11 @@ class _ShutdownFlag:
         self.requested = True
 
 
-def run_consumer(cfg: StreamConfig, shutdown: _ShutdownFlag | None = None) -> None:
+def run_consumer(
+    cfg: StreamConfig,
+    shutdown: _ShutdownFlag | None = None,
+    heartbeat_path: Path = HEARTBEAT_PATH,
+) -> None:
     """Consume transactions, score each via the serving API, publish predictions."""
     shutdown = shutdown or _install_shutdown_handler()
     consumer = _build_consumer(cfg)
@@ -93,6 +102,7 @@ def run_consumer(cfg: StreamConfig, shutdown: _ShutdownFlag | None = None) -> No
     try:
         while not shutdown.requested:
             message = consumer.poll(POLL_TIMEOUT_SECONDS)
+            _touch_heartbeat(heartbeat_path)
             if message is None:
                 continue
             if message.error():
@@ -213,7 +223,8 @@ def _fetch_prediction(
     *,
     max_attempts: int = MAX_PREDICT_RETRIES,
 ) -> PredictionResult:
-    """Bounded retries: a 4xx (except 429) is a permanent reject, 5xx and 429 are retried."""
+    """Bounded retries: 5xx is retried, 429 honors Retry-After and yields to the breaker, 401/403
+    holds, and any other 4xx is a permanent reject."""
     body = predict_request_body(event)
     headers = _auth_headers(cfg)
     for attempt in range(1, max_attempts + 1):
@@ -231,6 +242,12 @@ def _fetch_prediction(
             return PredictionResult(
                 FetchOutcome.OK, prediction_from_response(event, response.json())
             )
+        if response.status_code == TOO_MANY_REQUESTS:
+            # Shedding: honor Retry-After and let the breaker open now instead of burning the
+            # whole retry budget per message, which would only pile more load on the server.
+            log.warning("predict_throttled", attempt=attempt)
+            _interruptible_sleep(_shed_delay(response), shutdown)
+            return PredictionResult(FetchOutcome.UNAVAILABLE)
         if _is_retryable_status(response.status_code):
             log.warning("predict_unavailable", status=response.status_code, attempt=attempt)
             _backoff(attempt)
@@ -250,7 +267,40 @@ def _fetch_prediction(
 
 
 def _is_retryable_status(status_code: int) -> bool:
-    return status_code >= SERVER_ERROR_START or status_code == TOO_MANY_REQUESTS
+    return status_code >= SERVER_ERROR_START
+
+
+def _shed_delay(response: requests.Response) -> float:
+    retry_after = _retry_after_seconds(response)
+    if retry_after is None:
+        return BACKOFF_BASE_SECONDS
+    # Floor a zero or past Retry-After to the base backoff so a server cannot drive a tight retry.
+    return min(max(retry_after, BACKOFF_BASE_SECONDS), BACKOFF_MAX_SECONDS)
+
+
+def _retry_after_seconds(response: requests.Response) -> float | None:
+    """Parse a Retry-After header in either delta-seconds or HTTP-date form; None if absent."""
+    value = response.headers.get("Retry-After")
+    if value is None:
+        return None
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        pass
+    try:
+        when = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    return max(0.0, (when - datetime.now(UTC)).total_seconds())
+
+
+def _touch_heartbeat(path: Path) -> None:
+    try:
+        path.touch()
+    except OSError as exc:
+        log.warning("heartbeat_touch_failed", error=str(exc))
 
 
 def _auth_headers(cfg: StreamConfig) -> dict[str, str]:

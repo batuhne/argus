@@ -22,6 +22,15 @@ spec:
         fsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
+      # Spread replicas across nodes so one node loss cannot take serving to zero. Soft, so a
+      # single-node cluster still schedules.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: argus-serving
       containers:
         - name: serving
           image: argus-app

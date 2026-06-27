@@ -1,16 +1,23 @@
+from datetime import UTC, datetime, timedelta
+from email.utils import format_datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
 import requests
 
 from fraud.ingestion.consumer import (
+    BACKOFF_BASE_SECONDS,
+    BACKOFF_MAX_SECONDS,
     MAX_PREDICT_RETRIES,
     FetchOutcome,
     _CircuitBreaker,
     _fetch_prediction,
     _handle_message,
     _interruptible_sleep,
+    _retry_after_seconds,
     _seek_back,
+    _shed_delay,
     _ShutdownFlag,
     predict_request_body,
     prediction_from_response,
@@ -52,9 +59,15 @@ _PREDICT_BODY = {"fraud_score": 0.12, "decision": False, "threshold": 0.07, "mod
 
 
 class _FakeResponse:
-    def __init__(self, status_code: int, payload: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        status_code: int,
+        payload: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> None:
         self.status_code = status_code
         self._payload = payload or {}
+        self.headers = headers or {}
 
     def json(self) -> dict[str, Any]:
         return self._payload
@@ -219,11 +232,55 @@ def test_fetch_prediction_retries_then_succeeds_on_transient_error() -> None:
     assert session.calls == 2
 
 
-def test_fetch_prediction_retries_on_too_many_requests() -> None:
-    session = _FakeSession([_FakeResponse(429), _FakeResponse(200, _PREDICT_BODY)])
+def test_fetch_prediction_yields_to_breaker_on_too_many_requests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    delays: list[float] = []
+    monkeypatch.setattr(
+        "fraud.ingestion.consumer._interruptible_sleep",
+        lambda seconds, _shutdown: delays.append(seconds),
+    )
+    session = _FakeSession([_FakeResponse(429, headers={"Retry-After": "2"})])
     result = _fetch_prediction(_cfg(), session, _event(), _ShutdownFlag())  # type: ignore[arg-type]
-    assert result.outcome is FetchOutcome.OK
-    assert session.calls == 2
+    assert result.outcome is FetchOutcome.UNAVAILABLE
+    assert session.calls == 1  # one shot, then yield to the breaker; no per-message retry storm
+    assert delays == [2.0]  # honored Retry-After
+
+
+def test_retry_after_seconds_parses_delta_seconds() -> None:
+    response = _FakeResponse(429, headers={"Retry-After": "5"})
+    assert _retry_after_seconds(response) == 5.0  # type: ignore[arg-type]
+
+
+def test_retry_after_seconds_is_none_when_absent_or_invalid() -> None:
+    assert _retry_after_seconds(_FakeResponse(429)) is None  # type: ignore[arg-type]
+    assert _retry_after_seconds(_FakeResponse(429, headers={"Retry-After": "soon"})) is None  # type: ignore[arg-type]
+
+
+def test_retry_after_seconds_parses_http_date() -> None:
+    future = format_datetime(datetime.now(UTC) + timedelta(seconds=30))
+    parsed = _retry_after_seconds(_FakeResponse(429, headers={"Retry-After": future}))  # type: ignore[arg-type]
+    assert parsed is not None
+    assert 20.0 <= parsed <= 35.0
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "-5",
+        format_datetime(datetime.now(UTC) - timedelta(seconds=60)),  # a past HTTP-date
+    ],
+)
+def test_retry_after_seconds_clamps_past_to_zero(value: str) -> None:
+    assert _retry_after_seconds(_FakeResponse(429, headers={"Retry-After": value})) == 0.0  # type: ignore[arg-type]
+
+
+def test_shed_delay_caps_floors_and_defaults() -> None:
+    capped = _shed_delay(_FakeResponse(429, headers={"Retry-After": "999"}))  # type: ignore[arg-type]
+    assert capped == pytest.approx(BACKOFF_MAX_SECONDS)
+    floored = _shed_delay(_FakeResponse(429, headers={"Retry-After": "0"}))  # type: ignore[arg-type]
+    assert floored == pytest.approx(BACKOFF_BASE_SECONDS)  # a zero Retry-After cannot tight-loop
+    assert _shed_delay(_FakeResponse(429)) == pytest.approx(BACKOFF_BASE_SECONDS)  # type: ignore[arg-type]
 
 
 def test_fetch_prediction_retries_on_connection_error() -> None:
@@ -319,13 +376,18 @@ def test_handle_message_routes_rejected_to_dlq_and_commits() -> None:
     assert ("reason", b"rejected") in producer.produced[0][2]
 
 
-def test_handle_message_treats_too_many_requests_as_retryable() -> None:
+def test_handle_message_counts_throttle_toward_breaker(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "fraud.ingestion.consumer._interruptible_sleep", lambda _seconds, _shutdown: None
+    )
     producer, consumer = _FakeProducer(), _FakeConsumer()
-    session = _FakeSession([_FakeResponse(429), _FakeResponse(200, _PREDICT_BODY)])
-    committed = _handle(_FakeMessage(_payload()), session, producer, consumer, _breaker())
-    assert committed is True
-    assert session.calls == 2
-    assert producer.produced[0][0] == "predictions"
+    session = _FakeSession([_FakeResponse(429)])
+    breaker = _breaker()
+    committed = _handle(_FakeMessage(_payload()), session, producer, consumer, breaker)
+    assert committed is False  # held, not committed
+    assert producer.produced == []  # not dead-lettered
+    assert breaker.failures == 1  # a single 429 counts toward the breaker
+    assert session.calls == 1
 
 
 def test_handle_message_holds_offset_when_serving_unavailable() -> None:
@@ -393,7 +455,7 @@ def test_interruptible_sleep_returns_when_shutdown_requested(
 
 
 def test_run_consumer_holds_offset_and_paces_when_serving_down(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     shutdown = _ShutdownFlag()
     consumer = _LoopConsumer(_FakeMessage(_payload()), deliver_count=4, shutdown=shutdown)
@@ -407,9 +469,11 @@ def test_run_consumer_holds_offset_and_paces_when_serving_down(
         "fraud.ingestion.consumer._interruptible_sleep",
         lambda seconds, _shutdown: cooldowns.append(seconds),
     )
+    heartbeat = tmp_path / "consumer-alive"
 
-    run_consumer(_cfg(), shutdown)
+    run_consumer(_cfg(), shutdown, heartbeat_path=heartbeat)
 
     assert consumer.commits == 0
     assert consumer.seeks
     assert cooldowns
+    assert heartbeat.exists()  # the poll loop refreshed the liveness heartbeat

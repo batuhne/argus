@@ -1,5 +1,7 @@
 import dataclasses
 import math
+import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import pandas as pd
@@ -14,10 +16,13 @@ from fraud.monitoring.exporter import (
     DRIFT_KIND_PERF,
     FEATURE_PSI,
     FEATURE_PSI_MAX,
+    JOIN_CLOCK_LAG,
+    LAST_RECOMPUTE,
     BreachLatch,
     MonitorState,
     _event_time_seconds,
     _route,
+    _run_recompute_cycle,
     _top_psi,
     _window_start_partitions,
 )
@@ -135,6 +140,55 @@ def test_recompute_survives_drift_failure() -> None:
     state.recompute()
 
     assert producer.produced == []
+
+
+def _gauge(metric: Any) -> float:
+    return float(next(iter(metric.collect())).samples[0].value)
+
+
+def test_update_fast_metrics_sets_join_clock_lag() -> None:
+    cfg = _cfg(min_current_for_drift=10_000)
+    state = MonitorState(cfg, _baseline(), _FakeProducer(), drift_fn=_drift_clean)  # type: ignore[arg-type]
+    state.handle_scored_features(_scored("t-1"), event_time=time.time() - 100.0)
+
+    state.update_fast_metrics()
+
+    assert 90.0 <= _gauge(JOIN_CLOCK_LAG) <= 300.0
+
+
+def test_join_clock_lag_untouched_without_events() -> None:
+    cfg = _cfg(min_current_for_drift=10_000)
+    state = MonitorState(cfg, _baseline(), _FakeProducer(), drift_fn=_drift_clean)  # type: ignore[arg-type]
+    before = _gauge(JOIN_CLOCK_LAG)
+
+    state.update_fast_metrics()  # no events, so the join clock is undefined and stays put
+
+    assert _gauge(JOIN_CLOCK_LAG) == before
+
+
+def test_update_fast_metrics_stamps_last_recompute() -> None:
+    cfg = _cfg(min_current_for_drift=10_000)
+    state = MonitorState(cfg, _baseline(), _FakeProducer(), drift_fn=_drift_clean)  # type: ignore[arg-type]
+
+    state.update_fast_metrics()
+
+    assert _gauge(LAST_RECOMPUTE) >= time.time() - 5.0
+
+
+def test_recompute_cycle_offloads_drift_and_emits_when_ready() -> None:
+    producer = _FakeProducer()
+    cfg = _cfg(drift_debounce_cycles=1, min_current_for_drift=1)
+    state = MonitorState(cfg, _baseline(), producer, drift_fn=_drift_drifted)  # type: ignore[arg-type]
+    state.handle_scored_features(_scored("t-1"), event_time=0.0)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        job = _run_recompute_cycle(state, executor, None)
+        assert job is not None
+        assert producer.produced == []  # the drift result is not ready on the first cycle
+        job.result()
+        _run_recompute_cycle(state, executor, job)
+
+    assert any(topic == cfg.drift_alerts_topic for topic, _ in producer.produced)
 
 
 def test_top_psi_returns_highest_descending() -> None:

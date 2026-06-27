@@ -17,6 +17,8 @@ env:
 jobs:
   promote:
     runs-on: ubuntu-latest
+    # Gate promotion behind the environment's protection rules (required reviewers, wait timer).
+    environment: production
     steps:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3

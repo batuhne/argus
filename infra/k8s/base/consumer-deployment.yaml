@@ -23,6 +23,13 @@ spec:
         fsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: argus-consumer
       containers:
         - name: consumer
           image: argus-app
@@ -42,7 +49,16 @@ spec:
             limits:
               cpu: "500m"
               memory: "512Mi"
-          # No HTTP server, so no probes.
+          # No HTTP server; liveness checks the heartbeat the loop refreshes each poll, so a hung
+          # poll is restarted while an intentional backoff keeps heartbeating.
+          livenessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - "import os,sys,time; sys.exit(0 if time.time()-os.path.getmtime('/tmp/consumer-alive')<60 else 1)"
+            initialDelaySeconds: 20
+            periodSeconds: 20
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

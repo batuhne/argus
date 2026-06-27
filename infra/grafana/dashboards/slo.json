@@ -77,6 +77,35 @@
           "legendFormat": "in progress"
         }
       ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Error budget burn rate (x budget)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 6 }, { "color": "red", "value": 14.4 } ] }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "(sum(rate(bentoml_service_request_total{http_response_code=~\"5..\"}[1h])) / clamp_min(sum(rate(bentoml_service_request_total[1h])), 1e-9)) / 0.001",
+          "legendFormat": "fast (1h)"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "(sum(rate(bentoml_service_request_total{http_response_code=~\"5..\"}[6h])) / clamp_min(sum(rate(bentoml_service_request_total[6h])), 1e-9)) / 0.001",
+          "legendFormat": "slow (6h)"
+        }
+      ]
     }
   ]
 }

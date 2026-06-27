@@ -22,6 +22,10 @@ MILLISECONDS_PER_SECOND = 1000.0
 # Hard cap on in-flight requests per replica: excess is shed with 429 instead of piling up and
 # exhausting the worker. Horizontal scale, not this number, carries real throughput.
 MAX_CONCURRENT_REQUESTS = 64
+# A request this far over the 50ms SLO is wedged; time it out so it frees its concurrency slot
+# instead of holding it for BentoML's 60s default. Kept below the consumer's 5s client timeout
+# so a slow request returns a 504 the caller can classify, not a client-side connection error.
+MAX_REQUEST_DURATION_SECONDS = 4
 
 
 class PredictRequest(BaseModel):
@@ -42,7 +46,13 @@ class PredictResponse(BaseModel):
     latency_ms: float
 
 
-@bentoml.service(name="argus_fraud_serving", traffic={"max_concurrency": MAX_CONCURRENT_REQUESTS})
+@bentoml.service(
+    name="argus_fraud_serving",
+    traffic={
+        "max_concurrency": MAX_CONCURRENT_REQUESTS,
+        "timeout": MAX_REQUEST_DURATION_SECONDS,
+    },
+)
 class FraudService:
     def __init__(self) -> None:
         settings = get_settings()

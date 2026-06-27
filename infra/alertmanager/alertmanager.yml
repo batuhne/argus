@@ -1,12 +1,27 @@
 route:
   receiver: default
-  group_by: ["alertname"]
+  group_by: ["service", "alertname"]
   group_wait: 10s
   group_interval: 1m
   repeat_interval: 1h
+  routes:
+    - matchers: ['severity="critical"']
+      receiver: critical
+    - matchers: ['severity="warning"']
+      receiver: warning
 
-# Local stack: alerts are grouped and visible in the Alertmanager UI. The
-# machine retraining trigger is the drift-alerts topic, published by the
-# monitoring service, not this notification path.
+inhibit_rules:
+  # A fast burn is the same incident as the slow burn; page once, do not also ticket. Kept
+  # narrow on purpose: a blanket critical-mutes-warning per service would hide orthogonal
+  # serving warnings (latency, feature-fetch) during an unrelated critical like an auth blip.
+  - source_matchers: ['alertname="ServingFastErrorBudgetBurn"']
+    target_matchers: ['alertname="ServingSlowErrorBudgetBurn"']
+
+# Local stack: the routing tree and inhibitions are real, but the receivers are
+# no-ops. Wire PagerDuty/Slack into the critical and warning receivers per
+# environment. The machine retraining trigger is the drift-alerts topic, published
+# by the monitoring service, not this notification path.
 receivers:
   - name: default
+  - name: critical
+  - name: warning

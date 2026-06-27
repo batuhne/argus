@@ -1,9 +1,17 @@
+from typing import Any
+
 import numpy as np
 import pandas as pd
 import pytest
+import redis
 
 from fraud.ingestion.stream import RawAttributes
-from fraud.serving.features import assemble_features
+from fraud.serving.features import (
+    FEATURE_FETCH_ERRORS,
+    FEATURE_FETCH_SECONDS,
+    OnlineFeatureFetcher,
+    assemble_features,
+)
 from fraud.training.features import FEATURE_COLUMNS, LABEL_COLUMN
 from fraud.transforms import feature_logic as fl
 from fraud.transforms.encoders import CategoricalEncoder, fit_encoder
@@ -121,3 +129,62 @@ def test_assemble_does_not_mutate_input_frame(encoder: CategoricalEncoder) -> No
     assemble_features(online, amount=150.0, raw=RawAttributes(), encoder=encoder)
     assert "TransactionAmt" not in online.columns
     assert "C1" not in online.columns
+
+
+class _FakeOnlineResponse:
+    def __init__(self, frame: pd.DataFrame) -> None:
+        self._frame = frame
+
+    def to_df(self) -> pd.DataFrame:
+        return self._frame
+
+
+class _FakeStore:
+    def __init__(
+        self, frame: pd.DataFrame | None = None, *, error: Exception | None = None
+    ) -> None:
+        self._frame = frame
+        self._error = error
+
+    def get_online_features(self, features: Any, entity_rows: Any) -> _FakeOnlineResponse:
+        if self._error is not None:
+            raise self._error
+        assert self._frame is not None
+        return _FakeOnlineResponse(self._frame)
+
+
+def _fetcher(store: Any, encoder: CategoricalEncoder) -> Any:
+    fetcher: Any = OnlineFeatureFetcher.__new__(OnlineFeatureFetcher)
+    fetcher._store = store
+    fetcher._service = None
+    fetcher._encoder = encoder
+    return fetcher
+
+
+def _sample(metric: Any, name: str) -> float:
+    for sample in next(iter(metric.collect())).samples:
+        if sample.name == name:
+            return float(sample.value)
+    return 0.0
+
+
+def test_fetch_times_the_online_read(encoder: CategoricalEncoder) -> None:
+    fetcher = _fetcher(_FakeStore(_online_row()), encoder)
+    before = _sample(FEATURE_FETCH_SECONDS, "argus_feature_fetch_seconds_count")
+
+    fetcher.fetch("1_2_3_5", 150.0, RawAttributes())
+
+    assert _sample(FEATURE_FETCH_SECONDS, "argus_feature_fetch_seconds_count") == before + 1
+
+
+def test_fetch_counts_the_error_and_reraises(encoder: CategoricalEncoder) -> None:
+    fetcher = _fetcher(_FakeStore(error=redis.ConnectionError("down")), encoder)
+    before_errors = _sample(FEATURE_FETCH_ERRORS, "argus_feature_fetch_errors_total")
+    before_count = _sample(FEATURE_FETCH_SECONDS, "argus_feature_fetch_seconds_count")
+
+    with pytest.raises(redis.ConnectionError):
+        fetcher.fetch("1_2_3_5", 150.0, RawAttributes())
+
+    # The error is counted and the latency observed even on failure, so the ratio is well-defined.
+    assert _sample(FEATURE_FETCH_ERRORS, "argus_feature_fetch_errors_total") == before_errors + 1
+    assert _sample(FEATURE_FETCH_SECONDS, "argus_feature_fetch_seconds_count") == before_count + 1

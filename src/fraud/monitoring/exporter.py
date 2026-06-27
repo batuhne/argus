@@ -6,6 +6,7 @@ import math
 import signal
 import time
 from collections import deque
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from types import FrameType
@@ -49,6 +50,12 @@ DRIFTED_FEATURES = Gauge("argus_drifted_features", "Model-input features with PS
 MATCHED_TOTAL = Gauge("argus_matched_join", "Predictions joined with a label in the window")
 PENDING_JOIN = Gauge("argus_pending_join", "Predictions awaiting their delayed label")
 MODEL_VERSION = Gauge("argus_monitored_model_version", "Champion version under monitoring")
+JOIN_CLOCK_LAG = Gauge(
+    "argus_monitor_join_clock_lag_seconds", "Wall-clock seconds behind the latest joined event"
+)
+LAST_RECOMPUTE = Gauge(
+    "argus_monitor_last_recompute_timestamp_seconds", "Unix time of the last metrics recompute"
+)
 SCORED_EVENTS = Counter("argus_scored_events_total", "Scored-features events consumed")
 LABEL_EVENTS = Counter("argus_label_events_total", "Label events consumed")
 DRIFT_ALERTS = Counter("argus_drift_alerts_total", "Drift alerts published", ["kind"])
@@ -134,41 +141,62 @@ class MonitorState:
         return self._perf.current_event_time
 
     def recompute(self) -> None:
-        drift = self._compute_drift()
-        for alert in self._update_metrics(drift):
+        """Run one cycle synchronously: fast metrics, then drift. The exporter loop offloads
+        drift to a worker; this composes the same steps in a single call."""
+        self.emit(self.update_fast_metrics())
+        self.emit(self.apply_drift(self.compute_drift(self.drift_snapshot())))
+
+    def emit(self, alerts: list[DriftAlertEvent]) -> None:
+        for alert in alerts:
             self._emit(alert)
 
-    def _compute_drift(self) -> FeatureDrift | None:
-        if len(self._features) < self.cfg.min_current_for_drift:
-            return None
-        current = pd.DataFrame(list(self._features), columns=list(FEATURE_COLUMNS))
-        try:
-            return self.drift_fn(
-                self.baseline, current, FEATURE_COLUMNS, psi_threshold=self.cfg.psi_threshold
-            )
-        except ValueError as exc:
-            # A degenerate window (e.g. an all-null feature) must not crash the monitor; skip
-            # this drift cycle. Rolling AUPRC and cost still update.
-            log.warning("drift_computation_skipped", error=str(exc))
-            return None
-
-    def _update_metrics(self, drift: FeatureDrift | None) -> list[DriftAlertEvent]:
+    def update_fast_metrics(self) -> list[DriftAlertEvent]:
+        """Cheap gauges and the perf-decay check; runs on the consume loop every cycle."""
         auprc = self._perf.rolling_auprc()
         ROLLING_AUPRC.set(auprc)
         BUSINESS_COST.set(self._perf.business_cost_per_txn())
         FLAGGED_RATE.set(self._perf.flagged_rate())
         MATCHED_TOTAL.set(self._perf.matched_count)
         PENDING_JOIN.set(self._perf.pending_count)
-
-        alerts: list[DriftAlertEvent] = []
-        if drift is not None:
-            self._publish_psi(drift)
-            if self._data_latch.update(bool(drift.drifted_features)):
-                alerts.append(_data_drift_alert(drift))
-
+        self._set_join_clock_lag()
+        LAST_RECOMPUTE.set_to_current_time()
         if self._perf_latch.update(self._auprc_below_floor(auprc)):
-            alerts.append(_perf_decay_alert(auprc, self.cfg.auprc_floor))
-        return alerts
+            return [_perf_decay_alert(auprc, self.cfg.auprc_floor)]
+        return []
+
+    def drift_snapshot(self) -> list[dict[str, float]] | None:
+        if len(self._features) < self.cfg.min_current_for_drift:
+            return None
+        return list(self._features)
+
+    def compute_drift(self, snapshot: list[dict[str, float]] | None) -> FeatureDrift | None:
+        """Pure PSI over a feature snapshot; safe to run off the consume loop."""
+        if snapshot is None:
+            return None
+        current = pd.DataFrame(snapshot, columns=list(FEATURE_COLUMNS))
+        try:
+            return self.drift_fn(
+                self.baseline, current, FEATURE_COLUMNS, psi_threshold=self.cfg.psi_threshold
+            )
+        except Exception as exc:
+            # This runs on the drift worker; a failure here must skip the cycle, not propagate
+            # into the future and take down the consume loop. Fast metrics still update.
+            log.warning("drift_computation_skipped", error=str(exc))
+            return None
+
+    def apply_drift(self, drift: FeatureDrift | None) -> list[DriftAlertEvent]:
+        if drift is None:
+            return []
+        self._publish_psi(drift)
+        if self._data_latch.update(bool(drift.drifted_features)):
+            return [_data_drift_alert(drift)]
+        return []
+
+    def _set_join_clock_lag(self) -> None:
+        high_water = self._perf.current_event_time
+        if high_water <= 0.0:
+            return  # no events joined yet; the lag is undefined, not stale
+        JOIN_CLOCK_LAG.set(max(0.0, time.time() - high_water))
 
     def _publish_psi(self, drift: FeatureDrift) -> None:
         # Clear first so a feature dropping out of the top-N stops reporting a stale series.
@@ -244,18 +272,37 @@ def run_exporter(cfg: MonitoringConfig, shutdown: _ShutdownFlag | None = None) -
     log.info("exporter_start", port=cfg.exporter_port, baseline_rows=len(state.baseline))
 
     last_recompute = time.monotonic()
+    drift_job: Future[FeatureDrift | None] | None = None
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="drift")
     try:
         while not shutdown.requested:
             message = consumer.poll(POLL_TIMEOUT_SECONDS)
             if message is not None and message.error() is None:
                 _route(state, cfg, message)
             if time.monotonic() - last_recompute >= cfg.recompute_interval_seconds:
-                state.recompute()
+                drift_job = _run_recompute_cycle(state, executor, drift_job)
                 last_recompute = time.monotonic()
     finally:
+        executor.shutdown(wait=False, cancel_futures=True)
         consumer.close()
         state.producer.flush()
         log.info("exporter_stopped")
+
+
+def _run_recompute_cycle(
+    state: MonitorState,
+    executor: ThreadPoolExecutor,
+    drift_job: Future[FeatureDrift | None] | None,
+) -> Future[FeatureDrift | None] | None:
+    """Emit fast metrics now, collect a finished drift job, and start the next one. The PSI pass
+    runs on the executor so a slow window cannot stall the consume loop."""
+    state.emit(state.update_fast_metrics())
+    if drift_job is not None and drift_job.done():
+        state.emit(state.apply_drift(drift_job.result()))
+        drift_job = None
+    if drift_job is None:
+        drift_job = executor.submit(state.compute_drift, state.drift_snapshot())
+    return drift_job
 
 
 def _seek_to_window_start(

@@ -5,6 +5,7 @@ import os
 import pandas as pd
 import redis
 from feast import FeatureStore
+from prometheus_client import Counter, Histogram
 
 from fraud.ingestion.stream import RawAttributes
 from fraud.serving.config import ServingConfig
@@ -13,6 +14,13 @@ from fraud.transforms import feature_logic as fl
 from fraud.transforms.encoders import CategoricalEncoder
 
 REDIS_PROBE_TIMEOUT_SECONDS = 1.0
+
+FEATURE_FETCH_SECONDS = Histogram(
+    "argus_feature_fetch_seconds", "Latency of the online feature-store read"
+)
+FEATURE_FETCH_ERRORS = Counter(
+    "argus_feature_fetch_errors_total", "Online feature-store read failures"
+)
 
 
 class OnlineFeatureFetcher:
@@ -25,10 +33,16 @@ class OnlineFeatureFetcher:
         self._encoder = encoder
 
     def fetch(self, card_id: str, amount: float, raw: RawAttributes) -> pd.DataFrame:
-        response = self._store.get_online_features(
-            features=self._service,
-            entity_rows=[{"card_id": card_id, "TransactionAmt": amount}],
-        )
+        # Counted and timed separately so a slow Redis is distinguishable from a slow request.
+        with FEATURE_FETCH_SECONDS.time():
+            try:
+                response = self._store.get_online_features(
+                    features=self._service,
+                    entity_rows=[{"card_id": card_id, "TransactionAmt": amount}],
+                )
+            except Exception:
+                FEATURE_FETCH_ERRORS.inc()
+                raise
         return assemble_features(response.to_df(), amount, raw, self._encoder)
 
 

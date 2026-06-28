@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
+from fraud.evaluation._coercion import coerce_pair
 from fraud.evaluation.business import CostMatrix
 
 
@@ -41,7 +42,7 @@ def select_threshold(
     constraints: ThresholdConstraints,
 ) -> ThresholdDecision:
     """Pick the cost-minimizing threshold under the recall and alert-volume limits."""
-    y_arr, score_arr = _coerce_pair(y_true, y_score)
+    y_arr, score_arr = coerce_pair(y_true, y_score, require_finite=True)
     if len(y_arr) == 0:
         raise ValueError("cannot select a threshold from an empty evaluation set")
 
@@ -133,15 +134,3 @@ def _decision_at(curve: _CostCurve, idx: int, *, n: int) -> ThresholdDecision:
         precision=float(curve.precision[idx]),
         flagged_rate=float(curve.flagged_rate[idx]),
     )
-
-
-def _coerce_pair(
-    y_true: ArrayLike, y_score: ArrayLike
-) -> tuple[NDArray[np.int8], NDArray[np.float64]]:
-    y_arr = np.asarray(y_true).astype(np.int8, copy=False)
-    score_arr = np.asarray(y_score, dtype=np.float64)
-    if y_arr.shape != score_arr.shape:
-        raise ValueError(f"y_true and y_score must align: got {y_arr.shape} vs {score_arr.shape}")
-    if not np.isfinite(score_arr).all():
-        raise ValueError("y_score must be finite (no NaN or inf)")
-    return y_arr, score_arr

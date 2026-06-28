@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-import signal
 import time
 from pathlib import Path
-from types import FrameType
 
 import numpy as np
 import pandas as pd
 from confluent_kafka import Producer
 
 from fraud.common.logging import configure_logging, get_logger
+from fraud.common.shutdown import ShutdownFlag, install_shutdown_handler
 from fraud.config import get_settings
 from fraud.params import StreamParams, load_params
 from fraud.paths import PROCESSED_DIR
@@ -29,14 +28,6 @@ _SOURCE_COLUMNS = ["TransactionID", LABEL_COLUMN, "TransactionDT"]
 _SLEEP_GRANULARITY_SECONDS = 0.25
 
 
-class _ShutdownFlag:
-    def __init__(self) -> None:
-        self.requested = False
-
-    def request(self, _signum: int, _frame: FrameType | None) -> None:
-        self.requested = True
-
-
 def run_label_simulator(
     cfg: StreamConfig,
     source_path: Path,
@@ -44,12 +35,12 @@ def run_label_simulator(
     stream_params: StreamParams,
     seed: int,
     producer: Producer | None = None,
-    shutdown: _ShutdownFlag | None = None,
+    shutdown: ShutdownFlag | None = None,
 ) -> int:
     """Emit each transaction's true label after its time-warped chargeback lag."""
     frame = _load_labels(source_path)
     producer = producer or Producer(durable_producer_config(cfg.bootstrap_servers))
-    shutdown = shutdown or _install_shutdown_handler()
+    shutdown = shutdown or install_shutdown_handler()
     schedule = _label_schedule(frame, stream_params, seed)
 
     start = time.monotonic()
@@ -107,20 +98,13 @@ def _publish(producer: Producer, topic: str, event: LabelEvent) -> None:
     )
 
 
-def _sleep_interruptible(seconds: float, shutdown: _ShutdownFlag) -> None:
+def _sleep_interruptible(seconds: float, shutdown: ShutdownFlag) -> None:
     deadline = time.monotonic() + seconds
     while not shutdown.requested:
         remaining = deadline - time.monotonic()
         if remaining <= 0.0:
             return
         time.sleep(min(_SLEEP_GRANULARITY_SECONDS, remaining))
-
-
-def _install_shutdown_handler() -> _ShutdownFlag:
-    shutdown = _ShutdownFlag()
-    signal.signal(signal.SIGINT, shutdown.request)
-    signal.signal(signal.SIGTERM, shutdown.request)
-    return shutdown
 
 
 def main() -> None:

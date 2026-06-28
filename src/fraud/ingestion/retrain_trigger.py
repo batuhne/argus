@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-import signal
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from types import FrameType
 
 from confluent_kafka import Consumer, Message
 from pydantic import ValidationError
 
 from fraud.common.logging import configure_logging, get_logger
+from fraud.common.shutdown import ShutdownFlag, install_shutdown_handler
 from fraud.config import get_settings
 from fraud.params import load_params
 from fraud.streaming.events import (
@@ -64,25 +63,17 @@ class RetrainTriggerConfig:
 TriggerFn = Callable[[DriftAlertEvent], None]
 
 
-class _ShutdownFlag:
-    def __init__(self) -> None:
-        self.requested = False
-
-    def request(self, _signum: int, _frame: FrameType | None) -> None:
-        self.requested = True
-
-
 def run_retrain_trigger(
     cfg: RetrainTriggerConfig,
     *,
     trigger: TriggerFn | None = None,
     clock: Callable[[], float] = time.monotonic,
-    shutdown: _ShutdownFlag | None = None,
+    shutdown: ShutdownFlag | None = None,
 ) -> None:
     """Fire the retraining deployment on each fresh drift alert, throttled by cooldown."""
     trigger = trigger or _deployment_trigger(cfg)
     gate = CooldownGate(cfg.cooldown_seconds)
-    shutdown = shutdown or _install_shutdown_handler()
+    shutdown = shutdown or install_shutdown_handler()
     consumer = _build_consumer(cfg)
     consumer.subscribe([cfg.drift_alerts_topic])
     log.info("retrain_trigger_start", topic=cfg.drift_alerts_topic, deployment=cfg.deployment_name)
@@ -146,13 +137,6 @@ def _deployment_trigger(cfg: RetrainTriggerConfig) -> TriggerFn:
             log.error("retrain_dispatch_failed", deployment=cfg.deployment_name, error=str(exc))
 
     return trigger
-
-
-def _install_shutdown_handler() -> _ShutdownFlag:
-    shutdown = _ShutdownFlag()
-    signal.signal(signal.SIGINT, shutdown.request)
-    signal.signal(signal.SIGTERM, shutdown.request)
-    return shutdown
 
 
 def main() -> None:

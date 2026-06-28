@@ -3,9 +3,9 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from fraud.common.shutdown import ShutdownFlag
 from fraud.ingestion.label_simulator import (
     _label_schedule,
-    _ShutdownFlag,
     run_label_simulator,
 )
 from fraud.params import StreamParams
@@ -104,7 +104,7 @@ def test_run_publishes_every_label_keyed_by_transaction(tmp_path: Path) -> None:
         stream_params=_instant_params(),
         seed=0,
         producer=producer,  # type: ignore[arg-type]
-        shutdown=_ShutdownFlag(),
+        shutdown=ShutdownFlag(),
     )
 
     assert published == 3
@@ -119,7 +119,7 @@ def test_shutdown_before_start_publishes_nothing(tmp_path: Path) -> None:
     source = tmp_path / "holdout.parquet"
     _frame().to_parquet(source)
     producer = _FakeProducer()
-    shutdown = _ShutdownFlag()
+    shutdown = ShutdownFlag()
     shutdown.requested = True
 
     published = run_label_simulator(

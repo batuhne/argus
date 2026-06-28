@@ -1,16 +1,15 @@
 from __future__ import annotations
 
-import signal
 import time
 from collections.abc import Hashable, Iterator
 from pathlib import Path
-from types import FrameType
 from typing import Any
 
 import pandas as pd
 from confluent_kafka import Producer
 
 from fraud.common.logging import configure_logging, get_logger
+from fraud.common.shutdown import install_shutdown_handler
 from fraud.config import get_settings
 from fraud.params import StreamParams, load_params
 from fraud.paths import PROCESSED_DIR
@@ -35,14 +34,6 @@ _SOURCE_COLUMNS = [
 ]
 
 
-class _ShutdownFlag:
-    def __init__(self) -> None:
-        self.requested = False
-
-    def request(self, _signum: int, _frame: FrameType | None) -> None:
-        self.requested = True
-
-
 def run_producer(cfg: StreamConfig, source_path: Path, *, stream_params: StreamParams) -> int:
     """Replay transactions to the topic at the real per-transaction tempo (time-warped)."""
     frame = _load_transactions(source_path)
@@ -52,7 +43,7 @@ def run_producer(cfg: StreamConfig, source_path: Path, *, stream_params: StreamP
         time_warp_factor=stream_params.time_warp_factor,
         max_step_seconds=stream_params.max_message_delay_seconds,
     )
-    shutdown = _install_shutdown_handler()
+    shutdown = install_shutdown_handler()
 
     published = 0
     try:
@@ -128,13 +119,6 @@ def _publish(producer: Producer, topic: str, event: TransactionEvent) -> None:
 def _on_delivery(error: object, _message: object) -> None:
     if error is not None:
         log.warning("delivery_failed", error=str(error))
-
-
-def _install_shutdown_handler() -> _ShutdownFlag:
-    shutdown = _ShutdownFlag()
-    signal.signal(signal.SIGINT, shutdown.request)
-    signal.signal(signal.SIGTERM, shutdown.request)
-    return shutdown
 
 
 def main() -> None:

@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import random
-import signal
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from enum import StrEnum
 from pathlib import Path
-from types import FrameType
 from typing import Any
 
 import requests
@@ -16,6 +14,7 @@ from confluent_kafka import Consumer, KafkaException, Message, Producer, TopicPa
 from pydantic import ValidationError
 
 from fraud.common.logging import configure_logging, get_logger
+from fraud.common.shutdown import ShutdownFlag, install_shutdown_handler
 from fraud.config import get_settings
 from fraud.streaming.events import (
     PredictionEvent,
@@ -76,21 +75,13 @@ class _CircuitBreaker:
         return self.failures >= self.threshold
 
 
-class _ShutdownFlag:
-    def __init__(self) -> None:
-        self.requested = False
-
-    def request(self, _signum: int, _frame: FrameType | None) -> None:
-        self.requested = True
-
-
 def run_consumer(
     cfg: StreamConfig,
-    shutdown: _ShutdownFlag | None = None,
+    shutdown: ShutdownFlag | None = None,
     heartbeat_path: Path = HEARTBEAT_PATH,
 ) -> None:
     """Consume transactions, score each via the serving API, publish predictions."""
-    shutdown = shutdown or _install_shutdown_handler()
+    shutdown = shutdown or install_shutdown_handler()
     consumer = _build_consumer(cfg)
     producer = Producer(durable_producer_config(cfg.bootstrap_servers))
     session = requests.Session()
@@ -139,7 +130,7 @@ def _handle_message(
     session: requests.Session,
     producer: Producer,
     consumer: Consumer,
-    shutdown: _ShutdownFlag,
+    shutdown: ShutdownFlag,
     breaker: _CircuitBreaker,
 ) -> bool:
     """Score one message; True if committed, False to redeliver when a downstream is down."""
@@ -218,7 +209,7 @@ def _fetch_prediction(
     cfg: StreamConfig,
     session: requests.Session,
     event: TransactionEvent,
-    shutdown: _ShutdownFlag,
+    shutdown: ShutdownFlag,
     *,
     max_attempts: int = MAX_PREDICT_RETRIES,
 ) -> PredictionResult:
@@ -390,20 +381,13 @@ def _backoff(attempt: int) -> None:
     time.sleep(delay + random.uniform(0.0, BACKOFF_JITTER_SECONDS))
 
 
-def _interruptible_sleep(seconds: float, shutdown: _ShutdownFlag) -> None:
+def _interruptible_sleep(seconds: float, shutdown: ShutdownFlag) -> None:
     deadline = time.monotonic() + seconds
     while not shutdown.requested:
         remaining = deadline - time.monotonic()
         if remaining <= 0.0:
             return
         time.sleep(min(SHUTDOWN_POLL_SECONDS, remaining))
-
-
-def _install_shutdown_handler() -> _ShutdownFlag:
-    shutdown = _ShutdownFlag()
-    signal.signal(signal.SIGINT, shutdown.request)
-    signal.signal(signal.SIGTERM, shutdown.request)
-    return shutdown
 
 
 def main() -> None:

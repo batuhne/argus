@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import math
-import signal
 import time
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from types import FrameType
 from typing import Protocol
 
 import pandas as pd
@@ -18,6 +16,7 @@ from prometheus_client import Counter, Gauge, start_http_server
 from pydantic import ValidationError
 
 from fraud.common.logging import configure_logging, get_logger
+from fraud.common.shutdown import ShutdownFlag, install_shutdown_handler
 from fraud.config import get_settings
 from fraud.monitoring.baseline import load_baseline
 from fraud.monitoring.config import MonitoringConfig
@@ -248,17 +247,9 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-class _ShutdownFlag:
-    def __init__(self) -> None:
-        self.requested = False
-
-    def request(self, _signum: int, _frame: FrameType | None) -> None:
-        self.requested = True
-
-
-def run_exporter(cfg: MonitoringConfig, shutdown: _ShutdownFlag | None = None) -> None:
+def run_exporter(cfg: MonitoringConfig, shutdown: ShutdownFlag | None = None) -> None:
     """Consume scored-features and labels, expose ML health metrics, alert on drift."""
-    shutdown = shutdown or _install_shutdown_handler()
+    shutdown = shutdown or install_shutdown_handler()
     state = MonitorState(
         cfg, load_baseline(cfg), Producer(durable_producer_config(cfg.bootstrap_servers))
     )
@@ -359,13 +350,6 @@ def _build_consumer(cfg: MonitoringConfig) -> Consumer:
             "auto.offset.reset": "earliest",
         }
     )
-
-
-def _install_shutdown_handler() -> _ShutdownFlag:
-    shutdown = _ShutdownFlag()
-    signal.signal(signal.SIGINT, shutdown.request)
-    signal.signal(signal.SIGTERM, shutdown.request)
-    return shutdown
 
 
 def main() -> None:

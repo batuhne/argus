@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 import requests
 
+from fraud.common.shutdown import ShutdownFlag
 from fraud.ingestion.consumer import (
     BACKOFF_BASE_SECONDS,
     BACKOFF_MAX_SECONDS,
@@ -18,7 +19,6 @@ from fraud.ingestion.consumer import (
     _retry_after_seconds,
     _seek_back,
     _shed_delay,
-    _ShutdownFlag,
     predict_request_body,
     prediction_from_response,
     run_consumer,
@@ -166,7 +166,7 @@ class _FakeMessage:
 
 
 class _LoopConsumer:
-    def __init__(self, message: Any, *, deliver_count: int, shutdown: _ShutdownFlag) -> None:
+    def __init__(self, message: Any, *, deliver_count: int, shutdown: ShutdownFlag) -> None:
         self._message = message
         self._remaining = deliver_count
         self._shutdown = shutdown
@@ -219,7 +219,7 @@ def test_prediction_from_response_maps_fields() -> None:
 
 def test_fetch_prediction_returns_event_on_success() -> None:
     session = _FakeSession([_FakeResponse(200, _PREDICT_BODY)])
-    result = _fetch_prediction(_cfg(), session, _event(), _ShutdownFlag())  # type: ignore[arg-type]
+    result = _fetch_prediction(_cfg(), session, _event(), ShutdownFlag())  # type: ignore[arg-type]
     assert result.outcome is FetchOutcome.OK
     assert result.prediction is not None
     assert result.prediction.fraud_score == pytest.approx(0.12)
@@ -228,7 +228,7 @@ def test_fetch_prediction_returns_event_on_success() -> None:
 
 def test_fetch_prediction_retries_then_succeeds_on_transient_error() -> None:
     session = _FakeSession([_FakeResponse(503), _FakeResponse(200, _PREDICT_BODY)])
-    result = _fetch_prediction(_cfg(), session, _event(), _ShutdownFlag())  # type: ignore[arg-type]
+    result = _fetch_prediction(_cfg(), session, _event(), ShutdownFlag())  # type: ignore[arg-type]
     assert result.outcome is FetchOutcome.OK
     assert session.calls == 2
 
@@ -242,7 +242,7 @@ def test_fetch_prediction_yields_to_breaker_on_too_many_requests(
         lambda seconds, _shutdown: delays.append(seconds),
     )
     session = _FakeSession([_FakeResponse(429, headers={"Retry-After": "2"})])
-    result = _fetch_prediction(_cfg(), session, _event(), _ShutdownFlag())  # type: ignore[arg-type]
+    result = _fetch_prediction(_cfg(), session, _event(), ShutdownFlag())  # type: ignore[arg-type]
     assert result.outcome is FetchOutcome.UNAVAILABLE
     assert session.calls == 1  # one shot, then yield to the breaker; no per-message retry storm
     assert delays == [2.0]  # honored Retry-After
@@ -286,27 +286,27 @@ def test_shed_delay_caps_floors_and_defaults() -> None:
 
 def test_fetch_prediction_retries_on_connection_error() -> None:
     session = _FakeSession([requests.ConnectionError("boom"), _FakeResponse(200, _PREDICT_BODY)])
-    result = _fetch_prediction(_cfg(), session, _event(), _ShutdownFlag())  # type: ignore[arg-type]
+    result = _fetch_prediction(_cfg(), session, _event(), ShutdownFlag())  # type: ignore[arg-type]
     assert result.outcome is FetchOutcome.OK
     assert session.calls == 2
 
 
 def test_fetch_prediction_rejects_on_client_error() -> None:
     session = _FakeSession([_FakeResponse(422)])
-    result = _fetch_prediction(_cfg(), session, _event(), _ShutdownFlag())  # type: ignore[arg-type]
+    result = _fetch_prediction(_cfg(), session, _event(), ShutdownFlag())  # type: ignore[arg-type]
     assert result.outcome is FetchOutcome.REJECTED
     assert session.calls == 1
 
 
 def test_fetch_prediction_unavailable_after_max_retries() -> None:
     session = _FakeSession([_FakeResponse(503)] * MAX_PREDICT_RETRIES)
-    result = _fetch_prediction(_cfg(), session, _event(), _ShutdownFlag())  # type: ignore[arg-type]
+    result = _fetch_prediction(_cfg(), session, _event(), ShutdownFlag())  # type: ignore[arg-type]
     assert result.outcome is FetchOutcome.UNAVAILABLE
     assert session.calls == MAX_PREDICT_RETRIES
 
 
 def test_fetch_prediction_aborts_when_shutdown_requested() -> None:
-    shutdown = _ShutdownFlag()
+    shutdown = ShutdownFlag()
     shutdown.requested = True
     session = _FakeSession([_FakeResponse(200, _PREDICT_BODY)])
     result = _fetch_prediction(_cfg(), session, _event(), shutdown)  # type: ignore[arg-type]
@@ -317,13 +317,13 @@ def test_fetch_prediction_aborts_when_shutdown_requested() -> None:
 def test_fetch_prediction_sends_bearer_header_when_key_set() -> None:
     session = _FakeSession([_FakeResponse(200, _PREDICT_BODY)])
     cfg = _cfg(predict_api_key="secret")
-    _fetch_prediction(cfg, session, _event(), _ShutdownFlag())  # type: ignore[arg-type]
+    _fetch_prediction(cfg, session, _event(), ShutdownFlag())  # type: ignore[arg-type]
     assert session.headers == {"Authorization": "Bearer secret"}
 
 
 def test_fetch_prediction_omits_auth_header_when_no_key() -> None:
     session = _FakeSession([_FakeResponse(200, _PREDICT_BODY)])
-    _fetch_prediction(_cfg(), session, _event(), _ShutdownFlag())  # type: ignore[arg-type]
+    _fetch_prediction(_cfg(), session, _event(), ShutdownFlag())  # type: ignore[arg-type]
     assert session.headers == {}
 
 
@@ -331,7 +331,7 @@ def test_fetch_prediction_omits_auth_header_when_no_key() -> None:
 def test_fetch_prediction_holds_without_dlq_on_auth_failure(status: int) -> None:
     # A wrong key must not dead-letter valid transactions; it holds for a fixed key to replay.
     session = _FakeSession([_FakeResponse(status)])
-    result = _fetch_prediction(_cfg(), session, _event(), _ShutdownFlag())  # type: ignore[arg-type]
+    result = _fetch_prediction(_cfg(), session, _event(), ShutdownFlag())  # type: ignore[arg-type]
     assert result.outcome is FetchOutcome.UNAVAILABLE
     assert session.calls == 1
 
@@ -343,7 +343,7 @@ def _handle(
     consumer: Any,
     breaker: _CircuitBreaker,
 ) -> bool:
-    return _handle_message(message, _cfg(), session, producer, consumer, _ShutdownFlag(), breaker)
+    return _handle_message(message, _cfg(), session, producer, consumer, ShutdownFlag(), breaker)
 
 
 def test_handle_message_publishes_prediction_and_commits_on_success() -> None:
@@ -449,7 +449,7 @@ def test_interruptible_sleep_returns_when_shutdown_requested(
     monkeypatch.setattr(
         "fraud.ingestion.consumer.time.sleep", lambda seconds: sleeps.append(seconds)
     )
-    shutdown = _ShutdownFlag()
+    shutdown = ShutdownFlag()
     shutdown.requested = True
     _interruptible_sleep(100.0, shutdown)
     assert sleeps == []  # the flag short-circuits the loop before any sleep
@@ -458,7 +458,7 @@ def test_interruptible_sleep_returns_when_shutdown_requested(
 def test_run_consumer_holds_offset_and_paces_when_serving_down(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    shutdown = _ShutdownFlag()
+    shutdown = ShutdownFlag()
     consumer = _LoopConsumer(_FakeMessage(_payload()), deliver_count=4, shutdown=shutdown)
     producer = _FakeProducer()
     session = _FakeSession([_FakeResponse(503)] * (MAX_PREDICT_RETRIES * 4))

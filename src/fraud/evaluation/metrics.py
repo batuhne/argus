@@ -4,20 +4,20 @@ import math
 from typing import TYPE_CHECKING
 
 import numpy as np
-import pandas as pd
 from numpy.typing import ArrayLike, NDArray
 from sklearn.metrics import average_precision_score, precision_recall_curve
+
+from fraud.evaluation._coercion import coerce_pair
 
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
 
 IntArray = NDArray[np.int8]
-FloatArray = NDArray[np.float64]
 
 
 def auprc(y_true: ArrayLike, y_score: ArrayLike) -> float:
     """Average precision; returns NaN if y_true is single-class."""
-    y_true_arr, y_score_arr = _coerce_pair(y_true, y_score)
+    y_true_arr, y_score_arr = coerce_pair(y_true, y_score)
     if not _has_both_classes(y_true_arr):
         return math.nan
     return float(average_precision_score(y_true_arr, y_score_arr))
@@ -27,7 +27,7 @@ def recall_at_k(y_true: ArrayLike, y_score: ArrayLike, k: float) -> float:
     """Recall over the top k fraction; NaN if no positives or k outside (0, 1]."""
     if not 0.0 < k <= 1.0:
         return math.nan
-    y_true_arr, y_score_arr = _coerce_pair(y_true, y_score)
+    y_true_arr, y_score_arr = coerce_pair(y_true, y_score)
     positives = int(y_true_arr.sum())
     if positives == 0:
         return math.nan
@@ -39,7 +39,7 @@ def recall_at_k(y_true: ArrayLike, y_score: ArrayLike, k: float) -> float:
 def classification_at_threshold(
     y_true: ArrayLike, y_score: ArrayLike, threshold: float
 ) -> dict[str, float]:
-    y_true_arr, y_score_arr = _coerce_pair(y_true, y_score)
+    y_true_arr, y_score_arr = coerce_pair(y_true, y_score)
     flagged = y_score_arr >= threshold
     positives = int(y_true_arr.sum())
     negatives = len(y_true_arr) - positives
@@ -56,7 +56,7 @@ def classification_at_threshold(
 def pr_curve_figure(y_true: ArrayLike, y_score: ArrayLike, title: str = "PR curve") -> Figure:
     from matplotlib.figure import Figure
 
-    y_true_arr, y_score_arr = _coerce_pair(y_true, y_score)
+    y_true_arr, y_score_arr = coerce_pair(y_true, y_score)
     figure = Figure(figsize=(6, 5))
     axes = figure.subplots()
     if _has_both_classes(y_true_arr):
@@ -71,22 +71,6 @@ def pr_curve_figure(y_true: ArrayLike, y_score: ArrayLike, title: str = "PR curv
     axes.set_title(title)
     figure.tight_layout()
     return figure
-
-
-def _coerce_pair(y_true: ArrayLike, y_score: ArrayLike) -> tuple[IntArray, FloatArray]:
-    y_true_arr = _to_array(y_true).astype(np.int8, copy=False)
-    y_score_arr = _to_array(y_score).astype(np.float64, copy=False)
-    if y_true_arr.shape != y_score_arr.shape:
-        raise ValueError(
-            f"y_true and y_score must align: got {y_true_arr.shape} vs {y_score_arr.shape}"
-        )
-    return y_true_arr, y_score_arr
-
-
-def _to_array(values: ArrayLike) -> NDArray[np.generic]:
-    if isinstance(values, pd.Series):
-        return values.to_numpy()
-    return np.asarray(values)
 
 
 def _has_both_classes(y_true: IntArray) -> bool:

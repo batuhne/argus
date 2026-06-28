@@ -32,7 +32,7 @@ from fraud.paths import FEATURE_REPO_DIR, PROCESSED_DIR
 from fraud.serving.config import ServingConfig
 from fraud.serving.model import ModelBundle, load_champion
 from fraud.training.dataset import build_eval_frame
-from fraud.training.features import build_xy
+from fraud.transforms.features import build_xy
 
 HOLDOUT_SPLIT = "holdout"
 log = get_logger(__name__)

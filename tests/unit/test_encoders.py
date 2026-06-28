@@ -3,7 +3,6 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from fraud.training.features import LABEL_COLUMN
 from fraud.transforms.encoders import (
     encoded_feature_names,
     fit_encoder,
@@ -11,6 +10,7 @@ from fraud.transforms.encoders import (
     load_encoder,
     save_encoder,
 )
+from fraud.transforms.features import LABEL_COLUMN
 
 
 def test_encoded_feature_names_match_transform_output_order() -> None:

@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from fraud.training.features import FEATURE_COLUMNS, LABEL_COLUMN, build_xy
+from fraud.transforms.features import FEATURE_COLUMNS, LABEL_COLUMN, build_xy
 
 
 def _full_frame(rows: int = 4) -> pd.DataFrame:

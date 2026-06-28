@@ -9,9 +9,9 @@ from prometheus_client import Counter, Histogram
 
 from fraud.ingestion.stream import RawAttributes
 from fraud.serving.config import ServingConfig
-from fraud.training.features import FEATURE_COLUMNS
 from fraud.transforms import feature_logic as fl
 from fraud.transforms.encoders import CategoricalEncoder
+from fraud.transforms.features import FEATURE_COLUMNS
 
 REDIS_PROBE_TIMEOUT_SECONDS = 1.0
 

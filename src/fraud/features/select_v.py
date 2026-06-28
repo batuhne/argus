@@ -12,8 +12,8 @@ from fraud.common.logging import configure_logging, get_logger
 from fraud.config import get_settings
 from fraud.params import SelectVParams, load_params
 from fraud.paths import PROCESSED_DIR
-from fraud.training.features import LABEL_COLUMN
 from fraud.transforms.feature_logic import V_SELECTED_PATH
+from fraud.transforms.features import LABEL_COLUMN
 
 V_COLUMN_PREFIX = "V"
 # A Spearman value between two card features needs enough overlapping non-null rows

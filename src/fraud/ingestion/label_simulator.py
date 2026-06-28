@@ -24,7 +24,7 @@ from fraud.ingestion.stream import (
 )
 from fraud.params import StreamParams, load_params
 from fraud.paths import PROCESSED_DIR
-from fraud.training.features import LABEL_COLUMN
+from fraud.transforms.features import LABEL_COLUMN
 
 log = get_logger(__name__)
 

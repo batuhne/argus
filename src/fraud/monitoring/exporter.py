@@ -31,7 +31,7 @@ from fraud.monitoring.baseline import load_baseline
 from fraud.monitoring.config import MonitoringConfig
 from fraud.monitoring.drift import FeatureDrift, compute_feature_drift
 from fraud.monitoring.perf_monitor import RollingPerformance
-from fraud.training.features import FEATURE_COLUMNS
+from fraud.transforms.features import FEATURE_COLUMNS
 
 log = get_logger(__name__)
 

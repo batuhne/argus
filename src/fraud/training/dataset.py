@@ -10,9 +10,9 @@ import pandas as pd
 from fraud.common.logging import configure_logging, get_logger
 from fraud.config import get_settings
 from fraud.paths import FEATURE_REPO_DIR, PROCESSED_DIR
-from fraud.training.features import LABEL_COLUMN
 from fraud.transforms import feature_logic as fl
 from fraud.transforms.encoders import CategoricalEncoder, fit_transform_oof
+from fraud.transforms.features import LABEL_COLUMN
 
 FEATURE_SERVICE = "card_activity"
 SPLITS: tuple[str, ...] = ("train", "val", "test")

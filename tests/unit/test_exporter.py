@@ -26,7 +26,7 @@ from fraud.monitoring.exporter import (
     _top_psi,
     _window_start_partitions,
 )
-from fraud.training.features import FEATURE_COLUMNS
+from fraud.transforms.features import FEATURE_COLUMNS
 
 
 @pytest.fixture(autouse=True)

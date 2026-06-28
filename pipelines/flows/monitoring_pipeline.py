@@ -12,7 +12,7 @@ from fraud.monitoring.baseline import load_baseline
 from fraud.monitoring.config import MonitoringConfig
 from fraud.monitoring.drift import build_drift_report, compute_feature_drift
 from fraud.training.dataset import SPLITS, build_training_frame
-from fraud.training.features import FEATURE_COLUMNS, build_xy
+from fraud.transforms.features import FEATURE_COLUMNS, build_xy
 
 MONITORING_EXPERIMENT = "argus-monitoring"
 

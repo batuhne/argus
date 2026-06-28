@@ -12,9 +12,9 @@ from fraud.serving.features import (
     OnlineFeatureFetcher,
     assemble_features,
 )
-from fraud.training.features import FEATURE_COLUMNS, LABEL_COLUMN
 from fraud.transforms import feature_logic as fl
 from fraud.transforms.encoders import CategoricalEncoder, fit_encoder
+from fraud.transforms.features import FEATURE_COLUMNS, LABEL_COLUMN
 
 
 @pytest.fixture

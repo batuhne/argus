@@ -42,7 +42,6 @@ from fraud.evaluation.threshold import (
 from fraud.params import load_params
 from fraud.paths import FEATURE_REPO_DIR, PROCESSED_DIR
 from fraud.training.dataset import FEATURE_SERVICE, add_encoded_categoricals, load_splits
-from fraud.training.features import build_xy
 from fraud.training.models import (
     BoostingHyperparams,
     build_cat,
@@ -65,6 +64,7 @@ from fraud.training.registry import (
 )
 from fraud.training.tune import tune_xgb
 from fraud.transforms.encoders import CategoricalEncoder, save_encoder
+from fraud.transforms.features import build_xy
 
 Splits = dict[str, tuple[pd.DataFrame, pd.Series]]
 BASELINE_SAMPLE_SIZE = 50000

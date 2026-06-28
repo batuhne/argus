@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from fraud.training.features import FEATURE_COLUMNS, LABEL_COLUMN
+from fraud.transforms.features import FEATURE_COLUMNS, LABEL_COLUMN
 
 # Signal lives in a fixed handful of columns with deliberate overlap, so the synthetic
 # model is strong but imperfect (non-zero cost) and stays that way as the contract widens.

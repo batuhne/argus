@@ -8,7 +8,7 @@ from fraud.features.select_v import (
     select_v_columns,
 )
 from fraud.params import SelectVParams
-from fraud.training.features import LABEL_COLUMN
+from fraud.transforms.features import LABEL_COLUMN
 
 
 def _params(**overrides: object) -> SelectVParams:

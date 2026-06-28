@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from fraud.config import get_settings
+from fraud.params import load_params
 from fraud.paths import FEATURE_REPO_DIR
 
 FEATURE_SERVICE = "card_activity"
@@ -24,10 +25,11 @@ class ServingConfig:
     @classmethod
     def from_settings(cls) -> ServingConfig:
         settings = get_settings()
+        params = load_params()
         return cls(
             tracking_uri=settings.mlflow_tracking_uri,
             model_name=settings.argus_model_name,
-            champion_alias="champion",
+            champion_alias=params.evaluation.champion_alias,
             feature_service=FEATURE_SERVICE,
             feast_repo_dir=FEATURE_REPO_DIR,
             redis_host=settings.redis_host,

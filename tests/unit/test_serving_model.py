@@ -33,6 +33,12 @@ def test_load_model_by_family_rejects_unknown_family() -> None:
         _load_model_by_family("randomforest", "models:/m@champion")
 
 
+def test_serving_config_sources_champion_alias_from_params() -> None:
+    from fraud.params import load_params
+
+    assert ServingConfig.from_settings().champion_alias == load_params().evaluation.champion_alias
+
+
 def _cfg(**overrides: Any) -> ServingConfig:
     return dataclasses.replace(ServingConfig.from_settings(), **overrides)
 

@@ -40,7 +40,8 @@ class MonitoringConfig:
         settings = get_settings()
         params = load_params()
         monitoring = params.monitoring
-        cost = params.evaluation.cost_matrix
+        evaluation = params.evaluation
+        cost = evaluation.cost_matrix
         return cls(
             bootstrap_servers=settings.kafka_bootstrap_servers,
             scored_features_topic=SCORED_FEATURES_TOPIC,
@@ -50,7 +51,7 @@ class MonitoringConfig:
             exporter_port=settings.monitoring_exporter_port,
             tracking_uri=settings.mlflow_tracking_uri,
             model_name=settings.argus_model_name,
-            champion_alias="champion",
+            champion_alias=evaluation.champion_alias,
             cost_matrix=CostMatrix(fn_cost_usd=cost.fn_cost_usd, fp_cost_usd=cost.fp_cost_usd),
             psi_threshold=monitoring.psi_threshold,
             psi_top_n=monitoring.psi_top_n,

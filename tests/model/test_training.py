@@ -46,6 +46,7 @@ def _config(tmp_path: pathlib.Path) -> TrainingConfig:
         encoder_n_splits=5,
         shap_sample_size=200,
         recall_at_k_levels=(0.05, 0.1),
+        calibration_method="isotonic",
         cost_matrix=CostMatrix(fn_cost_usd=100.0, fp_cost_usd=5.0),
         threshold_constraints=ThresholdConstraints(recall_floor=0.5, alert_volume_budget=0.6),
         gate_tolerances=GateTolerances(),

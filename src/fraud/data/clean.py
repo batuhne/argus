@@ -39,13 +39,13 @@ def clean(
     output_path: Path = OUTPUT_PATH,
     params: Params | None = None,
 ) -> None:
-    settings = params or load_params()
+    resolved = params or load_params()
     transactions = downcast(pd.read_csv(raw_dir / "train_transaction.csv"))
     identities = downcast(pd.read_csv(raw_dir / "train_identity.csv"))
 
     merged = merge_transactions(transactions, identities)
-    if settings.data.sample_size is not None:
-        merged = stratified_sample(merged, settings.data.sample_size, settings.seed)
+    if resolved.data.sample_size is not None:
+        merged = stratified_sample(merged, resolved.data.sample_size, resolved.seed)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     merged.to_parquet(output_path, index=False)

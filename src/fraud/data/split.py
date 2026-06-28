@@ -54,13 +54,13 @@ def split(
     output_dir: Path = PROCESSED_DIR,
     params: Params | None = None,
 ) -> None:
-    settings = params or load_params()
+    resolved = params or load_params()
     df = pd.read_parquet(input_path)
     train, val, test, holdout = time_split(
         df,
-        settings.split.val_fraction,
-        settings.split.test_fraction,
-        settings.split.holdout_fraction,
+        resolved.split.val_fraction,
+        resolved.split.test_fraction,
+        resolved.split.holdout_fraction,
     )
 
     output_dir.mkdir(parents=True, exist_ok=True)

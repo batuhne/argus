@@ -14,7 +14,6 @@ import mlflow.lightgbm
 import mlflow.xgboost
 import numpy as np
 import pandas as pd
-import yaml
 from numpy.typing import NDArray
 
 from fraud.common.lineage import collect_lineage
@@ -40,6 +39,7 @@ from fraud.evaluation.threshold import (
     ThresholdDecision,
     select_threshold,
 )
+from fraud.params import load_params
 from fraud.paths import FEATURE_REPO_DIR, PROCESSED_DIR
 from fraud.training.dataset import FEATURE_SERVICE, add_encoded_categoricals, load_splits
 from fraud.training.features import build_xy
@@ -64,16 +64,12 @@ from fraud.training.registry import (
     write_version_tags,
 )
 from fraud.training.tune import tune_xgb
-from fraud.transforms.encoders import (
-    DEFAULT_N_SPLITS,
-    DEFAULT_SMOOTHING,
-    CategoricalEncoder,
-    save_encoder,
-)
+from fraud.transforms.encoders import CategoricalEncoder, save_encoder
 
 Splits = dict[str, tuple[pd.DataFrame, pd.Series]]
 BASELINE_SAMPLE_SIZE = 50000
 log = get_logger(__name__)
+_CALIBRATORS = {"isotonic": fit_isotonic}
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,11 +81,12 @@ class TrainingConfig:
     candidate_alias: str
     champion_alias: str
     optuna_n_trials: int
-    optuna_timeout: int | None
+    optuna_timeout: int
     encoder_smoothing: float
     encoder_n_splits: int
     shap_sample_size: int
     recall_at_k_levels: tuple[float, ...]
+    calibration_method: str
     cost_matrix: CostMatrix
     threshold_constraints: ThresholdConstraints
     gate_tolerances: GateTolerances
@@ -103,33 +100,35 @@ class TrainingConfig:
         cls, *, n_trials: int | None = None, timeout: int | None = None
     ) -> TrainingConfig:
         settings = get_settings()
-        training_params = _load_section_params("training")
-        evaluation_params = _load_section_params("evaluation")
-        optuna_cfg = training_params.get("optuna") or {}
-        encoder_cfg = training_params.get("encoder") or {}
-        shap_cfg = training_params.get("shap") or {}
+        params = load_params()
+        training = params.training
+        evaluation = params.evaluation
         return cls(
-            seed=settings.seed,
+            seed=params.seed,
             tracking_uri=settings.mlflow_tracking_uri,
             experiment_name=settings.mlflow_experiment_name,
             model_name=settings.argus_model_name,
-            candidate_alias=str(training_params.get("candidate_alias", "candidate")),
-            champion_alias=str(evaluation_params.get("champion_alias", "champion")),
-            optuna_n_trials=int(
-                n_trials if n_trials is not None else optuna_cfg.get("n_trials", 30)
+            candidate_alias=training.candidate_alias,
+            champion_alias=evaluation.champion_alias,
+            optuna_n_trials=n_trials if n_trials is not None else training.optuna.n_trials,
+            optuna_timeout=timeout if timeout is not None else training.optuna.timeout_seconds,
+            encoder_smoothing=training.encoder.smoothing,
+            encoder_n_splits=training.encoder.n_splits,
+            shap_sample_size=training.shap.sample_size,
+            recall_at_k_levels=evaluation.recall_at_k_levels,
+            calibration_method=evaluation.calibration.method,
+            cost_matrix=CostMatrix(
+                fn_cost_usd=evaluation.cost_matrix.fn_cost_usd,
+                fp_cost_usd=evaluation.cost_matrix.fp_cost_usd,
             ),
-            optuna_timeout=(
-                timeout if timeout is not None else optuna_cfg.get("timeout_seconds", 1800)
+            threshold_constraints=ThresholdConstraints(
+                recall_floor=evaluation.threshold.recall_floor,
+                alert_volume_budget=evaluation.threshold.alert_volume_budget,
             ),
-            encoder_smoothing=float(encoder_cfg.get("smoothing", DEFAULT_SMOOTHING)),
-            encoder_n_splits=int(encoder_cfg.get("n_splits", DEFAULT_N_SPLITS)),
-            shap_sample_size=int(shap_cfg.get("sample_size", 2000)),
-            recall_at_k_levels=tuple(
-                float(k) for k in evaluation_params.get("recall_at_k_levels", [0.005, 0.01, 0.05])
+            gate_tolerances=GateTolerances(
+                auprc_tolerance=evaluation.gate.auprc_tolerance,
+                cost_tolerance=evaluation.gate.cost_tolerance,
             ),
-            cost_matrix=_cost_matrix_from(evaluation_params),
-            threshold_constraints=_threshold_constraints_from(evaluation_params),
-            gate_tolerances=_gate_tolerances_from(evaluation_params),
             run_name="argus_training",
             repo_dir=FEATURE_REPO_DIR,
             processed_dir=PROCESSED_DIR,
@@ -431,7 +430,7 @@ def _evaluate_and_gate(
     raw_val = primary.model.predict_proba(x_val)[:, 1]
     raw_test = primary.model.predict_proba(x_test)[:, 1]
 
-    calibration = fit_isotonic(y_val, raw_val)
+    calibration = _CALIBRATORS[cfg.calibration_method](y_val, raw_val)
     calibrated_val = calibration.calibrator.predict(raw_val)
     calibrated_test = calibration.calibrator.predict(raw_test)
     _log_calibration(calibration, y_test, calibrated_test)
@@ -619,40 +618,6 @@ def _write_run_marker(artifacts_dir: Path, result: TrainingResult) -> None:
         },
     }
     (artifacts_dir / "last_run.json").write_text(json.dumps(payload, indent=2))
-
-
-def _load_section_params(name: str, path: Path = Path("params.yaml")) -> dict[str, Any]:
-    if not path.is_file():
-        return {}
-    data = yaml.safe_load(path.read_text())
-    if not isinstance(data, dict):
-        return {}
-    section = data.get(name) or {}
-    return section if isinstance(section, dict) else {}
-
-
-def _cost_matrix_from(params: dict[str, Any]) -> CostMatrix:
-    matrix_cfg = params.get("cost_matrix") or {}
-    return CostMatrix(
-        fn_cost_usd=float(matrix_cfg.get("fn_cost_usd", 100.0)),
-        fp_cost_usd=float(matrix_cfg.get("fp_cost_usd", 5.0)),
-    )
-
-
-def _threshold_constraints_from(params: dict[str, Any]) -> ThresholdConstraints:
-    threshold_cfg = params.get("threshold") or {}
-    return ThresholdConstraints(
-        recall_floor=float(threshold_cfg.get("recall_floor", 0.5)),
-        alert_volume_budget=float(threshold_cfg.get("alert_volume_budget", 0.01)),
-    )
-
-
-def _gate_tolerances_from(params: dict[str, Any]) -> GateTolerances:
-    gate_cfg = params.get("gate") or {}
-    return GateTolerances(
-        auprc_tolerance=float(gate_cfg.get("auprc_tolerance", 0.0)),
-        cost_tolerance=float(gate_cfg.get("cost_tolerance", 0.0)),
-    )
 
 
 if __name__ == "__main__":

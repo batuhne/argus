@@ -17,6 +17,7 @@ def test_monitoring_config_loads_topics_and_thresholds() -> None:
     assert cfg.labels_topic == "labels"
     assert cfg.drift_alerts_topic == "drift-alerts"
     assert cfg.consumer_group == "argus-fraud-monitor"
+    assert cfg.champion_alias == "champion"
     assert cfg.psi_threshold == 0.2
     assert cfg.psi_top_n == 15
     assert cfg.auprc_floor == 0.30

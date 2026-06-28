@@ -12,16 +12,14 @@ from confluent_kafka import Producer
 
 from fraud.common.logging import configure_logging, get_logger
 from fraud.config import get_settings
-from fraud.ingestion.stream import (
-    RawAttributes,
-    StreamConfig,
-    TransactionEvent,
-    durable_producer_config,
-    replay_step_delays,
-    serialize,
-)
 from fraud.params import StreamParams, load_params
 from fraud.paths import PROCESSED_DIR
+from fraud.streaming.events import RawAttributes, TransactionEvent, serialize
+from fraud.streaming.transport import (
+    StreamConfig,
+    durable_producer_config,
+    replay_step_delays,
+)
 from fraud.transforms import feature_logic as fl
 
 log = get_logger(__name__)

@@ -13,13 +13,13 @@ from pydantic import ValidationError
 
 from fraud.common.logging import configure_logging, get_logger
 from fraud.config import get_settings
-from fraud.ingestion.stream import (
+from fraud.params import load_params
+from fraud.streaming.events import (
     DRIFT_ALERTS_TOPIC,
     RETRAIN_GROUP,
     DriftAlertEvent,
     deserialize_drift_alert,
 )
-from fraud.params import load_params
 
 log = get_logger(__name__)
 

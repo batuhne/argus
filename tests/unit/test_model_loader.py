@@ -7,15 +7,16 @@ import mlflow.lightgbm
 import mlflow.xgboost
 import pytest
 
-from fraud.serving.config import ServingConfig
-from fraud.serving.model import (
+from fraud.model_loader import (
     _RETRY_BASE_SECONDS,
     _RETRY_CAP_SECONDS,
+    ChampionLoadConfig,
     ChampionUnavailableError,
     _backoff_delay,
     _load_model_by_family,
     load_champion,
 )
+from fraud.serving.config import ServingConfig
 
 
 def test_load_model_by_family_dispatches_to_each_flavor(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -39,21 +40,29 @@ def test_serving_config_sources_champion_alias_from_params() -> None:
     assert ServingConfig.from_settings().champion_alias == load_params().evaluation.champion_alias
 
 
-def _cfg(**overrides: Any) -> ServingConfig:
-    return dataclasses.replace(ServingConfig.from_settings(), **overrides)
+def test_champion_load_config_sources_alias_from_params() -> None:
+    from fraud.params import load_params
+
+    assert (
+        ChampionLoadConfig.from_settings().champion_alias == load_params().evaluation.champion_alias
+    )
+
+
+def _cfg(**overrides: Any) -> ChampionLoadConfig:
+    return dataclasses.replace(ChampionLoadConfig.from_settings(), **overrides)
 
 
 def test_load_champion_retries_until_registry_is_ready(monkeypatch: pytest.MonkeyPatch) -> None:
     bundle = object()
     calls = {"n": 0}
 
-    def fake_load(_cfg: ServingConfig) -> object:
+    def fake_load(_cfg: ChampionLoadConfig) -> object:
         calls["n"] += 1
         if calls["n"] < 3:
             raise ChampionUnavailableError("not yet")
         return bundle
 
-    monkeypatch.setattr("fraud.serving.model._load_bundle", fake_load)
+    monkeypatch.setattr("fraud.model_loader._load_bundle", fake_load)
     monkeypatch.setattr(time, "sleep", lambda _s: None)
 
     assert load_champion(_cfg(load_deadline_seconds=30.0)) is bundle
@@ -61,10 +70,10 @@ def test_load_champion_retries_until_registry_is_ready(monkeypatch: pytest.Monke
 
 
 def test_load_champion_gives_up_after_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
-    def always_unavailable(_cfg: ServingConfig) -> object:
+    def always_unavailable(_cfg: ChampionLoadConfig) -> object:
         raise ChampionUnavailableError("never ready")
 
-    monkeypatch.setattr("fraud.serving.model._load_bundle", always_unavailable)
+    monkeypatch.setattr("fraud.model_loader._load_bundle", always_unavailable)
     monkeypatch.setattr(time, "sleep", lambda _s: None)
 
     with pytest.raises(ChampionUnavailableError):
@@ -74,11 +83,11 @@ def test_load_champion_gives_up_after_deadline(monkeypatch: pytest.MonkeyPatch) 
 def test_load_champion_does_not_retry_misconfiguration(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = {"n": 0}
 
-    def bad_family(_cfg: ServingConfig) -> object:
+    def bad_family(_cfg: ChampionLoadConfig) -> object:
         calls["n"] += 1
         raise RuntimeError("unsupported champion family 'rf'")
 
-    monkeypatch.setattr("fraud.serving.model._load_bundle", bad_family)
+    monkeypatch.setattr("fraud.model_loader._load_bundle", bad_family)
     monkeypatch.setattr(time, "sleep", lambda _s: None)
 
     with pytest.raises(RuntimeError, match="unsupported champion family"):

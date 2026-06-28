@@ -12,7 +12,7 @@ from fraud.evaluation.gate import (
     GateTolerances,
 )
 from fraud.evaluation.threshold import ThresholdConstraints
-from fraud.training.registry import (
+from fraud.registry import (
     CHAMPION_TAG_AUPRC,
     CHAMPION_TAG_COST_PER_TX,
     get_alias_version,
@@ -105,7 +105,7 @@ def test_gate_blocks_promotion_when_challenger_cost_regresses(
         auprc=first_run.primary.test_metrics["auprc"] + 0.05,
         expected_cost_per_tx=max(first_run.gate.test_expected_cost_per_tx - 1.0, 0.0),
     )
-    from fraud.training import registry
+    from fraud import registry
 
     registry.write_version_tags(
         cfg.model_name,

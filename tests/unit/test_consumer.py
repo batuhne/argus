@@ -23,7 +23,8 @@ from fraud.ingestion.consumer import (
     prediction_from_response,
     run_consumer,
 )
-from fraud.ingestion.stream import StreamConfig, TransactionEvent, serialize
+from fraud.streaming.events import TransactionEvent, serialize
+from fraud.streaming.transport import StreamConfig
 
 
 def _cfg(predict_api_key: str | None = None) -> StreamConfig:

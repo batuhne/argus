@@ -8,13 +8,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from fraud.common.logging import configure_logging, get_logger
 from fraud.config import get_settings
-from fraud.ingestion.stream import MAX_TRANSACTION_AMOUNT, RawAttributes, ScoredFeaturesEvent
+from fraud.model_loader import load_champion
 from fraud.serving.config import ServingConfig
 from fraud.serving.features import OnlineFeatureFetcher, redis_reachable
 from fraud.serving.inference_log import InferenceLogger
-from fraud.serving.model import load_champion
 from fraud.serving.predict import score_transaction
 from fraud.serving.security import MAX_REQUEST_BYTES, BodySizeLimitMiddleware, verify_api_key
+from fraud.streaming.events import MAX_TRANSACTION_AMOUNT, RawAttributes, ScoredFeaturesEvent
 
 log = get_logger(__name__)
 
@@ -62,7 +62,7 @@ class FraudService:
         self._api_key = api_key.get_secret_value() if api_key is not None else None
         if self._api_key is None:
             log.warning("serving_auth_disabled")
-        self._bundle = load_champion(self._cfg)
+        self._bundle = load_champion(self._cfg.champion_load_config)
         self._fetcher = OnlineFeatureFetcher(self._cfg, self._bundle.encoder)
         self._inference_log = InferenceLogger.from_bootstrap(settings.kafka_bootstrap_servers)
         log.info(

@@ -8,8 +8,9 @@ from fraud.ingestion.label_simulator import (
     _ShutdownFlag,
     run_label_simulator,
 )
-from fraud.ingestion.stream import LABELS_TOPIC, StreamConfig, deserialize_label
 from fraud.params import StreamParams
+from fraud.streaming.events import LABELS_TOPIC, deserialize_label
+from fraud.streaming.transport import StreamConfig
 
 
 def _cfg() -> StreamConfig:

@@ -1,7 +1,7 @@
 import pytest
 from pipelines.flows.monitoring_pipeline import validated_split
 
-from fraud.training.dataset import SPLITS
+from fraud.dataset import SPLITS
 
 
 @pytest.mark.parametrize("split", SPLITS)

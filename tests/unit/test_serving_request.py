@@ -1,12 +1,12 @@
 import pytest
 from pydantic import ValidationError
 
-from fraud.ingestion.stream import (
+from fraud.serving.service import PredictRequest
+from fraud.streaming.events import (
     MAX_CATEGORICAL_VALUE_LENGTH,
     MAX_RAW_VECTOR_ENTRIES,
     MAX_TRANSACTION_AMOUNT,
 )
-from fraud.serving.service import PredictRequest
 
 
 def test_request_accepts_valid_transaction() -> None:

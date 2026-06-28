@@ -5,7 +5,7 @@ from __future__ import annotations
 from confluent_kafka import KafkaException, Producer
 
 from fraud.common.logging import get_logger
-from fraud.ingestion.stream import SCORED_FEATURES_TOPIC, ScoredFeaturesEvent, serialize
+from fraud.streaming.events import SCORED_FEATURES_TOPIC, ScoredFeaturesEvent, serialize
 
 log = get_logger(__name__)
 

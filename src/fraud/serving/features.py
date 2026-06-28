@@ -7,8 +7,8 @@ import redis
 from feast import FeatureStore
 from prometheus_client import Counter, Histogram
 
-from fraud.ingestion.stream import RawAttributes
 from fraud.serving.config import ServingConfig
+from fraud.streaming.events import RawAttributes
 from fraud.transforms import feature_logic as fl
 from fraud.transforms.encoders import CategoricalEncoder
 from fraud.transforms.features import FEATURE_COLUMNS

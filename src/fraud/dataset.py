@@ -14,7 +14,6 @@ from fraud.transforms import feature_logic as fl
 from fraud.transforms.encoders import CategoricalEncoder, fit_transform_oof
 from fraud.transforms.features import LABEL_COLUMN
 
-FEATURE_SERVICE = "card_activity"
 SPLITS: tuple[str, ...] = ("train", "val", "test")
 SOURCE_COLUMNS = [
     "TransactionID",

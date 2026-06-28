@@ -7,7 +7,7 @@ from fraud.ingestion.retrain_trigger import (
     RetrainTriggerConfig,
     _handle_alert,
 )
-from fraud.ingestion.stream import (
+from fraud.streaming.events import (
     DRIFT_ALERTS_TOPIC,
     RETRAIN_GROUP,
     DriftAlertEvent,

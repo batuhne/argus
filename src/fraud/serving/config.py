@@ -4,10 +4,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from fraud.config import get_settings
+from fraud.model_loader import ChampionLoadConfig
 from fraud.params import load_params
-from fraud.paths import FEATURE_REPO_DIR
-
-FEATURE_SERVICE = "card_activity"
+from fraud.paths import FEATURE_REPO_DIR, FEATURE_SERVICE
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,3 +40,13 @@ class ServingConfig:
     @property
     def redis_connection(self) -> str:
         return f"{self.redis_host}:{self.redis_port}"
+
+    @property
+    def champion_load_config(self) -> ChampionLoadConfig:
+        return ChampionLoadConfig(
+            tracking_uri=self.tracking_uri,
+            model_name=self.model_name,
+            champion_alias=self.champion_alias,
+            request_timeout_seconds=self.request_timeout_seconds,
+            load_deadline_seconds=self.load_deadline_seconds,
+        )

@@ -20,6 +20,7 @@ from fraud.common.lineage import collect_lineage
 from fraud.common.logging import configure_logging, get_logger
 from fraud.common.seed import set_seed
 from fraud.config import get_settings
+from fraud.dataset import add_encoded_categoricals, load_splits
 from fraud.evaluation.business import CostMatrix, expected_cost
 from fraud.evaluation.calibration import (
     CalibrationResult,
@@ -40,16 +41,8 @@ from fraud.evaluation.threshold import (
     select_threshold,
 )
 from fraud.params import load_params
-from fraud.paths import FEATURE_REPO_DIR, PROCESSED_DIR
-from fraud.training.dataset import FEATURE_SERVICE, add_encoded_categoricals, load_splits
-from fraud.training.models import (
-    BoostingHyperparams,
-    build_cat,
-    build_lgb,
-    build_xgb,
-    compute_scale_pos_weight,
-)
-from fraud.training.registry import (
+from fraud.paths import FEATURE_REPO_DIR, FEATURE_SERVICE, PROCESSED_DIR
+from fraud.registry import (
     BASELINE_ARTIFACT_DIR,
     CALIBRATOR_ARTIFACT_DIR,
     CHAMPION_TAG_AUPRC,
@@ -61,6 +54,13 @@ from fraud.training.registry import (
     get_alias_version,
     get_version_tags,
     write_version_tags,
+)
+from fraud.training.models import (
+    BoostingHyperparams,
+    build_cat,
+    build_lgb,
+    build_xgb,
+    compute_scale_pos_weight,
 )
 from fraud.training.tune import tune_xgb
 from fraud.transforms.encoders import CategoricalEncoder, save_encoder

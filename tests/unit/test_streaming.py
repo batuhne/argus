@@ -2,7 +2,7 @@ import pandas as pd
 import pytest
 from pydantic import ValidationError
 
-from fraud.ingestion.stream import (
+from fraud.streaming.events import (
     MAX_CATEGORICAL_VALUE_LENGTH,
     MAX_RAW_VECTOR_ENTRIES,
     MAX_TRANSACTION_AMOUNT,
@@ -15,10 +15,9 @@ from fraud.ingestion.stream import (
     deserialize_label,
     deserialize_scored_features,
     deserialize_transaction,
-    durable_producer_config,
-    replay_step_delays,
     serialize,
 )
+from fraud.streaming.transport import durable_producer_config, replay_step_delays
 from fraud.transforms import feature_logic as fl
 
 

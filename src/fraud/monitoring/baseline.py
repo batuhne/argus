@@ -6,7 +6,7 @@ import mlflow
 import pandas as pd
 
 from fraud.monitoring.config import MonitoringConfig
-from fraud.training.registry import (
+from fraud.registry import (
     BASELINE_ARTIFACT_PATH,
     get_alias_version,
     get_version_run_id,

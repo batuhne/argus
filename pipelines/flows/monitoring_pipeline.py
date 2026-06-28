@@ -8,10 +8,10 @@ from prefect import flow, get_run_logger, task
 
 from fraud.common.logging import configure_logging
 from fraud.config import get_settings
+from fraud.dataset import SPLITS, build_training_frame
 from fraud.monitoring.baseline import load_baseline
 from fraud.monitoring.config import MonitoringConfig
 from fraud.monitoring.drift import build_drift_report, compute_feature_drift
-from fraud.training.dataset import SPLITS, build_training_frame
 from fraud.transforms.features import FEATURE_COLUMNS, build_xy
 
 MONITORING_EXPERIMENT = "argus-monitoring"

@@ -4,13 +4,13 @@ from dataclasses import dataclass
 
 from fraud.config import get_settings
 from fraud.evaluation.business import CostMatrix
-from fraud.ingestion.stream import (
+from fraud.params import load_params
+from fraud.streaming.events import (
     DRIFT_ALERTS_TOPIC,
     LABELS_TOPIC,
     MONITOR_GROUP,
     SCORED_FEATURES_TOPIC,
 )
-from fraud.params import load_params
 
 
 @dataclass(frozen=True, slots=True)

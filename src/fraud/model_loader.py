@@ -15,9 +15,10 @@ import mlflow.xgboost
 from mlflow.exceptions import MlflowException
 
 from fraud.common.logging import get_logger
+from fraud.config import get_settings
 from fraud.evaluation.calibration import IsotonicCalibrator
-from fraud.serving.config import ServingConfig
-from fraud.training.registry import (
+from fraud.params import load_params
+from fraud.registry import (
     CALIBRATOR_ARTIFACT_PATH,
     CHAMPION_TAG_FAMILY,
     CHAMPION_TAG_THRESHOLD,
@@ -35,6 +36,26 @@ _RETRY_CAP_SECONDS = 8.0
 
 
 @dataclass(frozen=True, slots=True)
+class ChampionLoadConfig:
+    tracking_uri: str
+    model_name: str
+    champion_alias: str
+    request_timeout_seconds: int
+    load_deadline_seconds: float
+
+    @classmethod
+    def from_settings(cls) -> ChampionLoadConfig:
+        settings = get_settings()
+        return cls(
+            tracking_uri=settings.mlflow_tracking_uri,
+            model_name=settings.argus_model_name,
+            champion_alias=load_params().evaluation.champion_alias,
+            request_timeout_seconds=settings.mlflow_request_timeout_seconds,
+            load_deadline_seconds=settings.model_load_deadline_seconds,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ModelBundle:
     model: Any
     calibrator: IsotonicCalibrator
@@ -48,7 +69,7 @@ class ChampionUnavailableError(RuntimeError):
     """Champion alias or tags not in the registry yet; a cold start may be racing training."""
 
 
-def load_champion(cfg: ServingConfig) -> ModelBundle:
+def load_champion(cfg: ChampionLoadConfig) -> ModelBundle:
     """Load the champion bundle, retrying a not-yet-ready registry until the deadline."""
     os.environ.setdefault("MLFLOW_HTTP_REQUEST_TIMEOUT", str(cfg.request_timeout_seconds))
     mlflow.set_tracking_uri(cfg.tracking_uri)
@@ -72,7 +93,7 @@ def _backoff_delay(attempt: int) -> float:
     return capped + random.uniform(0.0, _RETRY_BASE_SECONDS)
 
 
-def _load_bundle(cfg: ServingConfig) -> ModelBundle:
+def _load_bundle(cfg: ChampionLoadConfig) -> ModelBundle:
     version = get_alias_version(cfg.model_name, cfg.champion_alias)
     if version is None:
         raise ChampionUnavailableError(
@@ -118,6 +139,7 @@ def _load_calibrator(model_name: str, version: int) -> IsotonicCalibrator:
     local_path = mlflow.artifacts.download_artifacts(
         run_id=run_id, artifact_path=CALIBRATOR_ARTIFACT_PATH
     )
+    # Trusted artifact written by our own training run; provenance is the pinned run_id.
     calibrator: IsotonicCalibrator = joblib.load(local_path)
     return calibrator
 

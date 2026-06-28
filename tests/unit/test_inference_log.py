@@ -1,5 +1,5 @@
-from fraud.ingestion.stream import ScoredFeaturesEvent, deserialize_scored_features
 from fraud.serving.inference_log import InferenceLogger
+from fraud.streaming.events import ScoredFeaturesEvent, deserialize_scored_features
 
 
 def _event() -> ScoredFeaturesEvent:

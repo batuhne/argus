@@ -17,14 +17,13 @@ from pydantic import ValidationError
 
 from fraud.common.logging import configure_logging, get_logger
 from fraud.config import get_settings
-from fraud.ingestion.stream import (
+from fraud.streaming.events import (
     PredictionEvent,
-    StreamConfig,
     TransactionEvent,
     deserialize_transaction,
-    durable_producer_config,
     serialize,
 )
+from fraud.streaming.transport import StreamConfig, durable_producer_config
 
 log = get_logger(__name__)
 

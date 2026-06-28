@@ -19,18 +19,18 @@ from pydantic import ValidationError
 
 from fraud.common.logging import configure_logging, get_logger
 from fraud.config import get_settings
-from fraud.ingestion.stream import (
-    DriftAlertEvent,
-    ScoredFeaturesEvent,
-    deserialize_label,
-    deserialize_scored_features,
-    durable_producer_config,
-    serialize,
-)
 from fraud.monitoring.baseline import load_baseline
 from fraud.monitoring.config import MonitoringConfig
 from fraud.monitoring.drift import FeatureDrift, compute_feature_drift
 from fraud.monitoring.perf_monitor import RollingPerformance
+from fraud.streaming.events import (
+    DriftAlertEvent,
+    ScoredFeaturesEvent,
+    deserialize_label,
+    deserialize_scored_features,
+    serialize,
+)
+from fraud.streaming.transport import durable_producer_config
 from fraud.transforms.features import FEATURE_COLUMNS
 
 log = get_logger(__name__)

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from fraud.serving.model import ModelBundle
+from fraud.model_loader import ModelBundle
 
 
 @dataclass(frozen=True, slots=True)

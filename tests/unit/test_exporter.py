@@ -8,7 +8,6 @@ import pandas as pd
 import pytest
 from confluent_kafka import OFFSET_END, TopicPartition
 
-from fraud.ingestion.stream import ScoredFeaturesEvent, serialize
 from fraud.monitoring.config import MonitoringConfig
 from fraud.monitoring.drift import FeatureDrift
 from fraud.monitoring.exporter import (
@@ -26,6 +25,7 @@ from fraud.monitoring.exporter import (
     _top_psi,
     _window_start_partitions,
 )
+from fraud.streaming.events import ScoredFeaturesEvent, serialize
 from fraud.transforms.features import FEATURE_COLUMNS
 
 

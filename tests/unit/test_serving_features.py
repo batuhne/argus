@@ -5,13 +5,13 @@ import pandas as pd
 import pytest
 import redis
 
-from fraud.ingestion.stream import RawAttributes
 from fraud.serving.features import (
     FEATURE_FETCH_ERRORS,
     FEATURE_FETCH_SECONDS,
     OnlineFeatureFetcher,
     assemble_features,
 )
+from fraud.streaming.events import RawAttributes
 from fraud.transforms import feature_logic as fl
 from fraud.transforms.encoders import CategoricalEncoder, fit_encoder
 from fraud.transforms.features import FEATURE_COLUMNS, LABEL_COLUMN

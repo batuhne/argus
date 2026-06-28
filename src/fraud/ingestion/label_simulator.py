@@ -13,17 +13,14 @@ from confluent_kafka import Producer
 
 from fraud.common.logging import configure_logging, get_logger
 from fraud.config import get_settings
-from fraud.ingestion.stream import (
-    LABELS_TOPIC,
-    SECONDS_PER_DAY,
-    LabelEvent,
+from fraud.params import StreamParams, load_params
+from fraud.paths import PROCESSED_DIR
+from fraud.streaming.events import LABELS_TOPIC, SECONDS_PER_DAY, LabelEvent, serialize
+from fraud.streaming.transport import (
     StreamConfig,
     durable_producer_config,
     replay_step_delays,
-    serialize,
 )
-from fraud.params import StreamParams, load_params
-from fraud.paths import PROCESSED_DIR
 from fraud.transforms.features import LABEL_COLUMN
 
 log = get_logger(__name__)

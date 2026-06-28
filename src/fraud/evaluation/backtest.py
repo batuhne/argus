@@ -19,6 +19,7 @@ from sklearn.metrics import brier_score_loss
 
 from fraud.common.logging import configure_logging, get_logger
 from fraud.config import get_settings
+from fraud.dataset import build_eval_frame
 from fraud.evaluation.business import CostMatrix, expected_cost
 from fraud.evaluation.calibration import reliability_curve_figure
 from fraud.evaluation.metrics import (
@@ -27,11 +28,9 @@ from fraud.evaluation.metrics import (
     pr_curve_figure,
     recall_at_k,
 )
+from fraud.model_loader import ChampionLoadConfig, ModelBundle, load_champion
 from fraud.params import load_params
 from fraud.paths import FEATURE_REPO_DIR, PROCESSED_DIR
-from fraud.serving.config import ServingConfig
-from fraud.serving.model import ModelBundle, load_champion
-from fraud.training.dataset import build_eval_frame
 from fraud.transforms.features import build_xy
 
 HOLDOUT_SPLIT = "holdout"
@@ -109,7 +108,7 @@ def evaluate_holdout(
 def run_backtest(cfg: BacktestConfig) -> BacktestReport:
     mlflow.set_tracking_uri(cfg.tracking_uri)
     mlflow.set_experiment(cfg.experiment_name)
-    bundle = load_champion(ServingConfig.from_settings())
+    bundle = load_champion(ChampionLoadConfig.from_settings())
     x, y = _load_holdout_xy(bundle, cfg)
     calibrated = _calibrated_scores(bundle, x)
     report = evaluate_holdout(

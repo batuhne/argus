@@ -3,6 +3,7 @@ stages:
     cmd: PYTHONPATH=src python -m fraud.ingestion.download
     deps:
       - src/fraud/ingestion/download.py
+      - src/fraud/paths.py
     outs:
       - data/raw/train_transaction.csv
       - data/raw/train_identity.csv
@@ -12,6 +13,7 @@ stages:
     deps:
       - src/fraud/validation/validate.py
       - src/fraud/validation/schemas.py
+      - src/fraud/paths.py
       - data/raw/train_transaction.csv
       - data/raw/train_identity.csv
     outs:
@@ -22,6 +24,8 @@ stages:
     cmd: PYTHONPATH=src python -m fraud.data.clean
     deps:
       - src/fraud/data/clean.py
+      - src/fraud/params.py
+      - src/fraud/paths.py
       - data/raw/train_transaction.csv
       - data/raw/train_identity.csv
     params:
@@ -34,6 +38,8 @@ stages:
     cmd: PYTHONPATH=src python -m fraud.data.split
     deps:
       - src/fraud/data/split.py
+      - src/fraud/params.py
+      - src/fraud/paths.py
       - data/interim/clean.parquet
     params:
       - split.val_fraction
@@ -49,7 +55,11 @@ stages:
     cmd: PYTHONPATH=src python -m fraud.features.select_v
     deps:
       - src/fraud/features/select_v.py
-      - src/fraud/transforms/feature_logic.py
+      - src/fraud/transforms
+      - src/fraud/common
+      - src/fraud/config.py
+      - src/fraud/params.py
+      - src/fraud/paths.py
       - data/processed/train.parquet
     params:
       - seed
@@ -65,7 +75,9 @@ stages:
     cmd: PYTHONPATH=src python -m fraud.features.build_offline
     deps:
       - src/fraud/features/build_offline.py
+      # build_offline imports only feature_logic (a leaf), so this is a file dep, not the dir.
       - src/fraud/transforms/feature_logic.py
+      - src/fraud/paths.py
       - data/interim/clean.parquet
     outs:
       - feature_repo/data/card_features.parquet
@@ -77,12 +89,18 @@ stages:
       - src/fraud/transforms
       - src/fraud/evaluation
       - src/fraud/common
+      - src/fraud/config.py
+      - src/fraud/dataset.py
+      - src/fraud/params.py
+      - src/fraud/paths.py
+      - src/fraud/registry.py
       - feature_repo/v_selected.json
       - feature_repo/data/card_features.parquet
       - data/processed/train.parquet
       - data/processed/val.parquet
       - data/processed/test.parquet
     params:
+      - seed
       - training
       - evaluation
     outs:
@@ -93,14 +111,18 @@ stages:
     cmd: PYTHONPATH=src python -m fraud.evaluation.backtest
     deps:
       - src/fraud/evaluation
-      - src/fraud/serving
-      - src/fraud/training
       - src/fraud/transforms
       - src/fraud/common
+      - src/fraud/config.py
+      - src/fraud/dataset.py
+      - src/fraud/model_loader.py
+      - src/fraud/params.py
+      - src/fraud/paths.py
+      - src/fraud/registry.py
       - feature_repo/v_selected.json
       - feature_repo/data/card_features.parquet
       - data/processed/holdout.parquet
-      # re-run after a training run may have promoted a new champion
+      # ordering trigger after train; the champion itself comes from the registry, not DVC.
       - artifacts/last_run.json
     params:
       - evaluation

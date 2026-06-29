@@ -3,7 +3,7 @@ COMPOSE := docker compose -f infra/docker-compose.yml -f infra/docker-compose.mu
 COMPOSE_SINGLE := docker compose -f infra/docker-compose.yml
 
 .DEFAULT_GOAL := help
-.PHONY: help up up-single down restart logs ps fmt lint type test check select-v features train backtest serve consume produce \
+.PHONY: help up up-single down restart logs ps fmt lint type test dvc-deps check select-v features train backtest serve consume produce \
         up-app down-app label-sim monitor monitor-report retrain retrain-serve retrain-trigger \
         k8s-render k8s-validate
 
@@ -19,7 +19,8 @@ help:
 	@echo "  lint     lint code with ruff"
 	@echo "  type     type check with mypy"
 	@echo "  test     run the test suite"
-	@echo "  check    lint, type check, and test"
+	@echo "  dvc-deps check each DVC stage tracks its full code dependency closure"
+	@echo "  check    lint, type check, dep check, and test"
 	@echo "  select-v freeze the reduced V-feature set from the train split"
 	@echo "  features build offline features, then apply and materialize to Redis"
 	@echo "  train    fit XGBoost + LightGBM with Optuna sweep and log to MLflow"
@@ -67,7 +68,10 @@ type:
 test:
 	uv run pytest
 
-check: lint type test
+dvc-deps:
+	uv run python scripts/check_pipeline_deps.py
+
+check: lint type dvc-deps test
 
 select-v:
 	PYTHONPATH=src uv run python -m fraud.features.select_v

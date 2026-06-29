@@ -7,6 +7,10 @@ stages:
       hash: md5
       md5: c75f3866a5f30499d48e777427535869
       size: 2031
+    - path: src/fraud/paths.py
+      hash: md5
+      md5: b23d05f53d5241f69a89f3100bb5e0d6
+      size: 426
     outs:
     - path: data/raw/train_identity.csv
       hash: md5
@@ -27,14 +31,18 @@ stages:
       hash: md5
       md5: 58b4038d8715f5e11007b826bef00ce7
       size: 683351067
+    - path: src/fraud/paths.py
+      hash: md5
+      md5: b23d05f53d5241f69a89f3100bb5e0d6
+      size: 426
     - path: src/fraud/validation/schemas.py
       hash: md5
-      md5: 2783bedf82b8229abab7d6f8e1f780eb
-      size: 1062
+      md5: de16c877f1f08fae96ff843b0be8e3ff
+      size: 1758
     - path: src/fraud/validation/validate.py
       hash: md5
-      md5: 4bca874e0b9072662fce27209fbbe4c3
-      size: 1651
+      md5: 9c2e9269685f6efae61d893d8b326bd2
+      size: 1891
     outs:
     - path: reports/validation_report.json
       hash: md5
@@ -53,8 +61,16 @@ stages:
       size: 683351067
     - path: src/fraud/data/clean.py
       hash: md5
-      md5: c0bb8baa592474b7e42a7c988f61a09a
-      size: 1931
+      md5: fe28f49dcccd5727f61233e8a88eca6e
+      size: 2020
+    - path: src/fraud/params.py
+      hash: md5
+      md5: 434c6b930800eee5658f25036dddc43f
+      size: 6718
+    - path: src/fraud/paths.py
+      hash: md5
+      md5: b23d05f53d5241f69a89f3100bb5e0d6
+      size: 426
     params:
       params.yaml:
         data.sample_size:
@@ -73,22 +89,284 @@ stages:
       size: 84003710
     - path: src/fraud/data/split.py
       hash: md5
-      md5: 3e4a7811050485b18e6179dd542c17b6
-      size: 2011
+      md5: f325603ce04ce5f71a332a68d2ccce59
+      size: 2710
+    - path: src/fraud/params.py
+      hash: md5
+      md5: 434c6b930800eee5658f25036dddc43f
+      size: 6718
+    - path: src/fraud/paths.py
+      hash: md5
+      md5: b23d05f53d5241f69a89f3100bb5e0d6
+      size: 426
     params:
       params.yaml:
+        split.holdout_fraction: 0.15
         split.test_fraction: 0.15
         split.val_fraction: 0.15
     outs:
+    - path: data/processed/holdout.parquet
+      hash: md5
+      md5: e321973884d51f2660326827984026cd
+      size: 13433485
     - path: data/processed/test.parquet
       hash: md5
-      md5: 63a380e064de9c447180d85f1fbcea36
-      size: 13433201
+      md5: d21e0b529719a92bc544b359c60f5638
+      size: 12480713
     - path: data/processed/train.parquet
       hash: md5
-      md5: 6b92be4ddfb2c7d132103246b481e117
-      size: 58941850
+      md5: fd0351ee8acc58682c177fe3bfe6d38e
+      size: 46933730
     - path: data/processed/val.parquet
       hash: md5
-      md5: a03be644cee800e86c7ade181a4da9df
-      size: 12480429
+      md5: 6b95922f5a3e71a96f8bba8f0c47b507
+      size: 12473089
+  select_v:
+    cmd: PYTHONPATH=src python -m fraud.features.select_v
+    deps:
+    - path: data/processed/train.parquet
+      hash: md5
+      md5: fd0351ee8acc58682c177fe3bfe6d38e
+      size: 46933730
+    - path: src/fraud/common
+      hash: md5
+      md5: a7bb80f96e01ba4cdcbf238699e221cf.dir
+      size: 4819
+      nfiles: 5
+    - path: src/fraud/config.py
+      hash: md5
+      md5: 2f779aee14a85c4c1572b26240224432
+      size: 1712
+    - path: src/fraud/features/select_v.py
+      hash: md5
+      md5: e03d4a44db98cd41c8d1723926d319ea
+      size: 3967
+    - path: src/fraud/params.py
+      hash: md5
+      md5: 434c6b930800eee5658f25036dddc43f
+      size: 6718
+    - path: src/fraud/paths.py
+      hash: md5
+      md5: b23d05f53d5241f69a89f3100bb5e0d6
+      size: 426
+    - path: src/fraud/transforms
+      hash: md5
+      md5: 6537633996e21b4f311fb48c72146a7a.dir
+      size: 13324
+      nfiles: 4
+    params:
+      params.yaml:
+        seed: 42
+        select_v.corr_sample_rows: 100000
+        select_v.correlation_threshold: 0.85
+        select_v.max_features: 30
+        select_v.max_missing_fraction: 0.9
+    outs:
+    - path: feature_repo/v_selected.json
+      hash: md5
+      md5: 9f98490fca16c752fd0e07d9182ae43a
+      size: 298
+  features:
+    cmd: PYTHONPATH=src python -m fraud.features.build_offline
+    deps:
+    - path: data/interim/clean.parquet
+      hash: md5
+      md5: 025e452cb896510a53d53907ae16aef2
+      size: 84003710
+    - path: src/fraud/features/build_offline.py
+      hash: md5
+      md5: ce73e00e8893ceff8fa7ffffe7b6f3e0
+      size: 814
+    - path: src/fraud/paths.py
+      hash: md5
+      md5: b23d05f53d5241f69a89f3100bb5e0d6
+      size: 426
+    - path: src/fraud/transforms/feature_logic.py
+      hash: md5
+      md5: a972024678525a1bd4a485c7921a0816
+      size: 5606
+    outs:
+    - path: feature_repo/data/card_features.parquet
+      hash: md5
+      md5: 3f2e7173d4d1134f766e47effc942d14
+      size: 12476576
+  train:
+    cmd: PYTHONPATH=src python -m fraud.training.train
+    deps:
+    - path: data/processed/test.parquet
+      hash: md5
+      md5: d21e0b529719a92bc544b359c60f5638
+      size: 12480713
+    - path: data/processed/train.parquet
+      hash: md5
+      md5: fd0351ee8acc58682c177fe3bfe6d38e
+      size: 46933730
+    - path: data/processed/val.parquet
+      hash: md5
+      md5: 6b95922f5a3e71a96f8bba8f0c47b507
+      size: 12473089
+    - path: feature_repo/data/card_features.parquet
+      hash: md5
+      md5: 3f2e7173d4d1134f766e47effc942d14
+      size: 12476576
+    - path: feature_repo/v_selected.json
+      hash: md5
+      md5: 9f98490fca16c752fd0e07d9182ae43a
+      size: 298
+    - path: src/fraud/common
+      hash: md5
+      md5: a7bb80f96e01ba4cdcbf238699e221cf.dir
+      size: 4819
+      nfiles: 5
+    - path: src/fraud/config.py
+      hash: md5
+      md5: 2f779aee14a85c4c1572b26240224432
+      size: 1712
+    - path: src/fraud/dataset.py
+      hash: md5
+      md5: 36455a097263b010e2ab7ee59175583e
+      size: 4869
+    - path: src/fraud/evaluation
+      hash: md5
+      md5: 001f02de3dfaad0b367c5c7b24d3fde8.dir
+      size: 25954
+      nfiles: 9
+    - path: src/fraud/params.py
+      hash: md5
+      md5: 434c6b930800eee5658f25036dddc43f
+      size: 6718
+    - path: src/fraud/paths.py
+      hash: md5
+      md5: b23d05f53d5241f69a89f3100bb5e0d6
+      size: 426
+    - path: src/fraud/registry.py
+      hash: md5
+      md5: 8a2524af2356984754cb1a2fa1fb8235
+      size: 2040
+    - path: src/fraud/training
+      hash: md5
+      md5: b99b74913a3709f1f4c2c08dccb50e7e.dir
+      size: 28839
+      nfiles: 4
+    - path: src/fraud/transforms
+      hash: md5
+      md5: 6537633996e21b4f311fb48c72146a7a.dir
+      size: 13324
+      nfiles: 4
+    params:
+      params.yaml:
+        evaluation:
+          champion_alias: champion
+          recall_at_k_levels:
+          - 0.005
+          - 0.01
+          - 0.05
+          calibration:
+            method: isotonic
+          cost_matrix:
+            fn_cost_usd: 100.0
+            fp_cost_usd: 5.0
+          threshold:
+            recall_floor: 0.1
+            alert_volume_budget: 0.1
+          gate:
+            auprc_tolerance: 0.0
+            cost_tolerance: 0.0
+        seed: 42
+        training:
+          candidate_alias: candidate
+          optuna:
+            n_trials: 50
+            timeout_seconds: 3600
+          encoder:
+            smoothing: 20.0
+            n_splits: 5
+          shap:
+            sample_size: 2000
+    outs:
+    - path: artifacts/last_run.json
+      hash: md5
+      md5: 38c93042ea07e68076632584ab7236df
+      size: 604
+  backtest:
+    cmd: PYTHONPATH=src python -m fraud.evaluation.backtest
+    deps:
+    - path: artifacts/last_run.json
+      hash: md5
+      md5: 38c93042ea07e68076632584ab7236df
+      size: 604
+    - path: data/processed/holdout.parquet
+      hash: md5
+      md5: e321973884d51f2660326827984026cd
+      size: 13433485
+    - path: feature_repo/data/card_features.parquet
+      hash: md5
+      md5: 3f2e7173d4d1134f766e47effc942d14
+      size: 12476576
+    - path: feature_repo/v_selected.json
+      hash: md5
+      md5: 9f98490fca16c752fd0e07d9182ae43a
+      size: 298
+    - path: src/fraud/common
+      hash: md5
+      md5: a7bb80f96e01ba4cdcbf238699e221cf.dir
+      size: 4819
+      nfiles: 5
+    - path: src/fraud/config.py
+      hash: md5
+      md5: 2f779aee14a85c4c1572b26240224432
+      size: 1712
+    - path: src/fraud/dataset.py
+      hash: md5
+      md5: 36455a097263b010e2ab7ee59175583e
+      size: 4869
+    - path: src/fraud/evaluation
+      hash: md5
+      md5: 001f02de3dfaad0b367c5c7b24d3fde8.dir
+      size: 25954
+      nfiles: 9
+    - path: src/fraud/model_loader.py
+      hash: md5
+      md5: 4ae1d58d689126ae536453dae8b20018
+      size: 5249
+    - path: src/fraud/params.py
+      hash: md5
+      md5: 434c6b930800eee5658f25036dddc43f
+      size: 6718
+    - path: src/fraud/paths.py
+      hash: md5
+      md5: b23d05f53d5241f69a89f3100bb5e0d6
+      size: 426
+    - path: src/fraud/registry.py
+      hash: md5
+      md5: 8a2524af2356984754cb1a2fa1fb8235
+      size: 2040
+    - path: src/fraud/transforms
+      hash: md5
+      md5: 6537633996e21b4f311fb48c72146a7a.dir
+      size: 13324
+      nfiles: 4
+    params:
+      params.yaml:
+        evaluation:
+          champion_alias: champion
+          recall_at_k_levels:
+          - 0.005
+          - 0.01
+          - 0.05
+          calibration:
+            method: isotonic
+          cost_matrix:
+            fn_cost_usd: 100.0
+            fp_cost_usd: 5.0
+          threshold:
+            recall_floor: 0.1
+            alert_volume_budget: 0.1
+          gate:
+            auprc_tolerance: 0.0
+            cost_tolerance: 0.0
+    outs:
+    - path: artifacts/backtest.json
+      hash: md5
+      md5: a504f8ed9142ecc9855f79810924623e
+      size: 554

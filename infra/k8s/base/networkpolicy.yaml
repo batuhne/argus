@@ -1,4 +1,4 @@
-# Default-deny everything, then allow only what serving needs. The data plane
+# Default-deny everything, then a per-workload allow below. The data plane
 # (Redis, Redpanda, MLflow, MinIO) is addressed by port here; in a real cluster
 # tighten the egress peers to namespace or pod selectors.
 apiVersion: networking.k8s.io/v1
@@ -76,3 +76,34 @@ spec:
           port: 3001
         - protocol: TCP
           port: 9092
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: monitor-allow
+spec:
+  podSelector:
+    matchLabels:
+      argus.io/app: monitoring
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    # Prometheus scrapes the metrics port. The scraper's namespace is environment-specific, so the
+    # source is left open in-cluster; tighten to the monitoring namespace under a real CNI.
+    - ports:
+        - protocol: TCP
+          port: 8000
+  egress:
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Kafka (consume scored-features/labels, publish drift-alerts), MLflow (resolve the baseline
+    # run), and S3/MinIO (download the baseline artifact).
+    - ports:
+        - protocol: TCP
+          port: 9092
+        - protocol: TCP
+          port: 5000
+        - protocol: TCP
+          port: 9000

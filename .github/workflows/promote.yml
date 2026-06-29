@@ -6,17 +6,100 @@ on:
       source:
         description: "Immutable tag that passed canary, e.g. sha-abc1234 (not the floating candidate)"
         required: true
-
-permissions:
-  contents: read
-  packages: write
+      prometheus_url:
+        description: "Base URL of a Prometheus reachable from the runner, for the canary burn-rate gate"
+        required: true
+      canary_window:
+        description: "Window the canary error ratio is measured over"
+        required: false
+        default: "30m"
+      max_error_ratio:
+        description: "Fail promotion if the canary 5xx ratio over the window exceeds this"
+        required: false
+        default: "0.0144"
+      canary_selector:
+        description: "Label selector identifying the canary series in bentoml_service_request_total"
+        required: false
+        default: 'app="argus-serving-canary"'
 
 env:
   IMAGE: ghcr.io/${{ github.repository }}
 
 jobs:
+  # Final error-budget backstop before flipping :stable. Model quality (decision agreement and
+  # AUPRC regression) is gated earlier by the ramp controller in src/fraud/serving/canary.py; this
+  # job only confirms the canary did not burn its error budget. It runs before the manual approval,
+  # so a hot canary is rejected even if a human clicks approve. Fail-closed: an unreachable
+  # Prometheus, a malformed metric, or no observed traffic blocks the promotion.
+  canary-analysis:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Gate on the canary burn rate
+        env:
+          PROM_URL: ${{ inputs.prometheus_url }}
+          WINDOW: ${{ inputs.canary_window }}
+          MAX_RATIO: ${{ inputs.max_error_ratio }}
+          SELECTOR: ${{ inputs.canary_selector }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import math
+          import os
+          import re
+          import sys
+          import urllib.parse
+          import urllib.request
+
+          prom = os.environ["PROM_URL"].rstrip("/")
+          window = os.environ["WINDOW"]
+          selector = os.environ["SELECTOR"]
+          max_ratio = float(os.environ["MAX_RATIO"])
+
+          # The inputs are interpolated into a PromQL string and a request URL, so validate them
+          # before use. The selector must be well-formed label matchers so a crafted value cannot
+          # break out of the {} braces and rewrite the query.
+          if urllib.parse.urlparse(prom).scheme not in ("http", "https"):
+              sys.exit("prometheus_url must be an http(s) URL.")
+          if not re.fullmatch(r"(?:\d+[smhdwy])+", window):
+              sys.exit(f"canary_window must be a Prometheus duration like 30m, got {window!r}.")
+          matcher = r'\s*[a-zA-Z_]\w*\s*(?:=|!=|=~|!~)\s*"(?:[^"\\]|\\.)*"\s*'
+          if not re.fullmatch(rf"{matcher}(?:,{matcher})*", selector):
+              sys.exit(f"canary_selector must be PromQL label matchers, got {selector!r}")
+
+          def query(expr: str) -> float:
+              url = f"{prom}/api/v1/query?" + urllib.parse.urlencode({"query": expr})
+              with urllib.request.urlopen(url, timeout=30) as resp:
+                  payload = json.load(resp)
+              if payload.get("status") != "success":
+                  raise RuntimeError(f"query failed: {payload}")
+              result = payload["data"]["result"]
+              return float(result[0]["value"][1]) if result else 0.0
+
+          base = f'bentoml_service_request_total{{{selector}}}'
+          errors = f'bentoml_service_request_total{{{selector},http_response_code=~"5.."}}'
+          total_rate = query(f"sum(rate({base}[{window}]))")
+          # rate() over a single in-window sample returns NaN, which slips past a plain > / <=
+          # comparison, so reject any non-finite reading rather than promote on no measurement.
+          if not math.isfinite(total_rate) or total_rate <= 0:
+              sys.exit(f"No usable canary traffic over {window} (rate={total_rate}); refusing to promote.")
+          error_rate = query(f"sum(rate({errors}[{window}]))")
+          if not math.isfinite(error_rate):
+              sys.exit(f"Canary error rate is not finite ({error_rate}); refusing to promote.")
+          ratio = error_rate / total_rate
+          print(f"Canary 5xx ratio over {window}: {ratio:.4f} (budget {max_ratio:.4f})")
+          if ratio > max_ratio:
+              sys.exit(f"Canary error ratio {ratio:.4f} exceeds {max_ratio:.4f}; refusing to promote.")
+          print("Canary within error budget; promotion may proceed.")
+          PY
+
   promote:
     runs-on: ubuntu-latest
+    needs: [canary-analysis]
+    permissions:
+      contents: read
+      packages: write
     # Gate promotion behind the environment's protection rules (required reviewers, wait timer).
     environment: production
     steps:

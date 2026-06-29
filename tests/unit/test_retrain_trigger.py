@@ -1,6 +1,7 @@
 from typing import cast
 
 from confluent_kafka import Message
+from prometheus_client import REGISTRY
 
 from fraud.ingestion.retrain_trigger import (
     CooldownGate,
@@ -85,6 +86,20 @@ def test_handle_alert_failed_dispatch_does_not_hold_cooldown() -> None:
     second = _drive(_alert_bytes(), gate, 10.0, dispatched=True)
     assert len(first) == 1
     assert len(second) == 1
+
+
+def test_successful_dispatch_increments_dispatch_counter() -> None:
+    before = REGISTRY.get_sample_value("argus_retrain_dispatches_total") or 0.0
+    _drive(_alert_bytes(), CooldownGate(0.0), 0.0, dispatched=True)
+    after = REGISTRY.get_sample_value("argus_retrain_dispatches_total") or 0.0
+    assert after == before + 1.0
+
+
+def test_failed_dispatch_increments_failure_counter() -> None:
+    before = REGISTRY.get_sample_value("argus_retrain_dispatch_failures_total") or 0.0
+    _drive(_alert_bytes(), CooldownGate(0.0), 0.0, dispatched=False)
+    after = REGISTRY.get_sample_value("argus_retrain_dispatch_failures_total") or 0.0
+    assert after == before + 1.0
 
 
 def test_config_from_settings_binds_drift_topic_and_retrain_group() -> None:

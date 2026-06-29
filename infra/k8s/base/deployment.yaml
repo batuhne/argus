@@ -16,6 +16,10 @@ spec:
         argus.io/app: serving
     spec:
       serviceAccountName: argus-serving
+      # preStop sleeps long enough for the endpoints controller to pull this pod before SIGTERM,
+      # so traffic stops arriving while in-flight requests finish (zero-drop drain). The grace
+      # period covers the sleep plus the server's own shutdown.
+      terminationGracePeriodSeconds: 45
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -67,6 +71,10 @@ spec:
               port: http
             initialDelaySeconds: 10
             periodSeconds: 10
+          lifecycle:
+            preStop:
+              exec:
+                command: ["python", "-c", "import time; time.sleep(5)"]
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

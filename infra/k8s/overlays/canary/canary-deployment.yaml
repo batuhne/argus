@@ -18,6 +18,9 @@ spec:
         argus.io/app: serving
     spec:
       serviceAccountName: argus-serving
+      # The canary takes real traffic, so it drains like stable: preStop holds while the endpoints
+      # controller pulls the pod, then in-flight requests finish before the server stops.
+      terminationGracePeriodSeconds: 45
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -60,6 +63,10 @@ spec:
               port: http
             initialDelaySeconds: 10
             periodSeconds: 10
+          lifecycle:
+            preStop:
+              exec:
+                command: ["python", "-c", "import time; time.sleep(5)"]
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

@@ -7,6 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from confluent_kafka import Consumer, Message
+from prometheus_client import Counter, start_http_server
 from pydantic import ValidationError
 
 from fraud.common.logging import configure_logging, get_logger
@@ -23,6 +24,11 @@ from fraud.streaming.events import (
 log = get_logger(__name__)
 
 POLL_TIMEOUT_SECONDS = 1.0
+
+RETRAIN_DISPATCHES = Counter("argus_retrain_dispatches_total", "Retraining deployments dispatched")
+RETRAIN_DISPATCH_FAILURES = Counter(
+    "argus_retrain_dispatch_failures_total", "Retraining dispatch attempts that failed"
+)
 
 
 @dataclass(slots=True)
@@ -46,6 +52,7 @@ class RetrainTriggerConfig:
     consumer_group: str
     deployment_name: str
     cooldown_seconds: float
+    metrics_port: int
 
     @classmethod
     def from_settings(cls) -> RetrainTriggerConfig:
@@ -57,6 +64,7 @@ class RetrainTriggerConfig:
             consumer_group=RETRAIN_GROUP,
             deployment_name=retraining.deployment_name,
             cooldown_seconds=retraining.cooldown_seconds,
+            metrics_port=settings.retrain_trigger_metrics_port,
         )
 
 
@@ -76,7 +84,13 @@ def run_retrain_trigger(
     shutdown = shutdown or install_shutdown_handler()
     consumer = _build_consumer(cfg)
     consumer.subscribe([cfg.drift_alerts_topic])
-    log.info("retrain_trigger_start", topic=cfg.drift_alerts_topic, deployment=cfg.deployment_name)
+    start_http_server(cfg.metrics_port)
+    log.info(
+        "retrain_trigger_start",
+        topic=cfg.drift_alerts_topic,
+        deployment=cfg.deployment_name,
+        metrics_port=cfg.metrics_port,
+    )
     try:
         while not shutdown.requested:
             message = consumer.poll(POLL_TIMEOUT_SECONDS)
@@ -109,7 +123,10 @@ def _handle_alert(
     log.info("retrain_fired", kind=alert.kind, metric=alert.metric, value=alert.value)
     # Hold the cooldown only on a confirmed dispatch, so a failed one retries on the next alert.
     if trigger(alert):
+        RETRAIN_DISPATCHES.inc()
         gate.mark(now)
+    else:
+        RETRAIN_DISPATCH_FAILURES.inc()
 
 
 def _build_consumer(cfg: RetrainTriggerConfig) -> Consumer:

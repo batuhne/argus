@@ -193,6 +193,10 @@ services:
     <<: *restart
     image: prom/prometheus:v2.55.1
     networks: [argus]
+    # Resolves the host-run retrain bridge target; Docker Desktop maps this automatically, Linux
+    # needs the explicit host-gateway alias.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus

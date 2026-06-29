@@ -1,0 +1,99 @@
+# Consumes scored-features and labels, exposes ML health metrics, and publishes drift alerts.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: monitoring
+  labels:
+    app: argus-monitoring
+spec:
+  replicas: 1
+  # Single replica with an in-memory join and PSI window: a second instance would split the
+  # partitions and compute metrics over half the stream each. Recreate so a rollout never runs
+  # two at once. Scaling out needs that state externalized first.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: argus-monitoring
+  template:
+    metadata:
+      labels:
+        app: argus-monitoring
+        argus.io/app: monitoring
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: argus-monitoring
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: monitoring
+          image: argus-app
+          args:
+            - python
+            - -m
+            - fraud.monitoring.exporter
+          ports:
+            - name: metrics
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: argus-serving-env
+            # Its own secret with only the artifact-store credentials; the monitor never calls
+            # /predict, so it must not hold the serving bearer token.
+            - secretRef:
+                name: argus-monitoring-secrets
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+          # The metrics server comes up only after the baseline artifact loads from MLflow, so the
+          # startup probe absorbs a cold registry (300s) before liveness takes over.
+          startupProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            periodSeconds: 5
+            failureThreshold: 60
+          # A wedged consume loop stays scrapable, so liveness only catches a dead process; the
+          # MonitorRecomputeStalled alert covers the wedge.
+          livenessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            periodSeconds: 20
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: monitoring
+  labels:
+    app: argus-monitoring
+spec:
+  selector:
+    app: argus-monitoring
+  ports:
+    - name: metrics
+      port: 8000
+      targetPort: metrics

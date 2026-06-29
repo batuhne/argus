@@ -13,6 +13,7 @@ resources:
   - configmap.yaml
   - deployment.yaml
   - consumer-deployment.yaml
+  - monitor-deployment.yaml
   - service.yaml
   - hpa.yaml
   - pdb.yaml

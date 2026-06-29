@@ -23,3 +23,9 @@ scrape_configs:
   - job_name: argus-monitoring
     static_configs:
       - targets: ["monitoring:8000"]
+
+  # The retrain bridge runs on the host (it needs the Prefect client, which the slim image omits),
+  # so it is reached over the Docker host gateway. Down until `make retrain-trigger` is running.
+  - job_name: argus-retrain-trigger
+    static_configs:
+      - targets: ["host.docker.internal:8002"]

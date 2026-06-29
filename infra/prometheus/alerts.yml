@@ -152,9 +152,11 @@ groups:
 
   - name: monitor_health
     rules:
+      # for:5m clears the monitor's own deploy gap: it is single-replica with a Recreate strategy
+      # and up to a 300s startup probe, so a rollout is down longer than a 2m window would tolerate.
       - alert: MonitorExporterDown
         expr: up{job="argus-monitoring"} == 0
-        for: 2m
+        for: 5m
         labels:
           severity: critical
           service: monitor
@@ -217,3 +219,18 @@ groups:
           summary: "Monitor is dropping stream messages on schema mismatch"
           description: "Scored-features or label messages failed validation in the last 15m; a producer may have shipped a breaking schema change."
           runbook_url: "https://github.com/batuhne/argus/blob/main/docs/runbooks.md#monitor-exporter-down-or-stalled"
+
+  - name: retrain_health
+    rules:
+      # The bridge logs a failed Prefect dispatch and deliberately does not hold the cooldown, so a
+      # drift alert can go unanswered with no retrain running; the counter is the only durable signal.
+      - alert: RetrainDispatchFailing
+        expr: increase(argus_retrain_dispatch_failures_total[15m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+          service: retrain
+        annotations:
+          summary: "Drift-triggered retrain dispatch is failing"
+          description: "A drift alert fired but the retraining deployment dispatch failed in the last 15m; drift is going unanswered."
+          runbook_url: "https://github.com/batuhne/argus/blob/main/docs/runbooks.md#retrain-dispatch-failing"

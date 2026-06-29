@@ -88,13 +88,32 @@ fires when PSI computation is throwing on the drift worker, so feature-drift det
 is degraded even though fast metrics still flow.
 
 - Down: check the monitoring container or pod; it rebuilds state from the retention
-  window on restart, so a restart is safe.
+  window on restart, so a restart is safe. On k8s the monitor is single-replica with
+  a Recreate strategy, so a routine deploy is briefly down; the alert waits 5m to ride
+  that out, and a longer outage is the real signal.
 - Behind or wedged: confirm the producer and label simulator are running, then check
   the consume loop for a hung poll. A restart rebuilds from the retention window.
 - Drift failing: check the monitor logs for `drift_computation_failed`; a malformed
   baseline or an all-constant feature window is the usual cause. Fast metrics are unaffected.
 - Schema mismatch: a spike in `argus_monitor_poison_messages_total` means messages are failing
   validation; check the producer schema against the event models. The loop runs but ingests nothing.
+
+## Retrain dispatch failing
+
+`RetrainDispatchFailing` fires when the drift-to-retraining bridge fails to dispatch
+the Prefect deployment. The bridge logs the error and deliberately keeps the cooldown
+open so the next alert retries, but until a dispatch succeeds, detected drift triggers
+no retraining.
+
+- Check the bridge logs for `retrain_dispatch_failed`; a Prefect API outage or a wrong
+  `deployment_name` is the usual cause. Confirm the retraining deployment is served
+  (`make retrain-serve`) and reachable.
+- The bridge runs as host tooling, not in the slim runtime image (it needs the Prefect
+  client from the pipeline dependency group). It exposes `argus_retrain_dispatch_failures_total`
+  and `argus_retrain_dispatches_total` on its metrics port; point Prometheus at that port
+  when running it as a long-lived service so this alert has data.
+- Once the dependency is restored, the next drift alert dispatches and the counter stops
+  advancing.
 
 ## API key rotation
 

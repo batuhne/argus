@@ -1,3 +1,5 @@
+"""Replay the holdout transactions onto the stream, keyed by card to keep per-card order."""
+
 from __future__ import annotations
 
 import time

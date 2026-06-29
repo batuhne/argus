@@ -1,3 +1,5 @@
+"""Cooperative shutdown flag and SIGINT/SIGTERM handler for the long-running loops."""
+
 from __future__ import annotations
 
 import signal

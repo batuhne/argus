@@ -1,3 +1,5 @@
+"""Typed, validated model of params.yaml; unknown or out-of-range values fail at load."""
+
 from pathlib import Path
 from typing import Literal
 

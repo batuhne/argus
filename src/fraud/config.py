@@ -1,3 +1,5 @@
+"""Runtime settings loaded from the environment and .env via pydantic-settings."""
+
 from functools import lru_cache
 
 from pydantic import SecretStr

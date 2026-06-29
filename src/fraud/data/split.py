@@ -1,3 +1,5 @@
+"""Split the cleaned data chronologically into train, validation, test, and holdout."""
+
 from __future__ import annotations
 
 from itertools import pairwise

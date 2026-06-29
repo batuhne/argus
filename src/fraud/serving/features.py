@@ -1,3 +1,5 @@
+"""Assemble the model feature row from the request and Feast; also the Redis readiness probe."""
+
 from __future__ import annotations
 
 import os

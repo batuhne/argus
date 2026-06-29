@@ -1,3 +1,5 @@
+"""Merge and clean the raw transaction and identity tables into the interim parquet."""
+
 from __future__ import annotations
 
 from pathlib import Path

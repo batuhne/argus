@@ -1,3 +1,5 @@
+"""Validate the raw data against the pandera schemas and a fraud-rate gate; exit on failure."""
+
 from __future__ import annotations
 
 import json

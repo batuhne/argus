@@ -1,3 +1,5 @@
+"""Configuration for the serving service, assembled from settings and params."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

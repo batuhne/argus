@@ -1,3 +1,5 @@
+"""MLflow registry helpers, plus the artifact-path and champion-tag key constants."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping

@@ -1,3 +1,5 @@
+"""Coerce a label/score pair into aligned int8 and float64 arrays."""
+
 from __future__ import annotations
 
 import numpy as np

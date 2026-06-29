@@ -1,3 +1,5 @@
+"""Repository path constants for data, the feature repo, and the feature service name."""
+
 from pathlib import Path
 
 DATA_DIR = Path("data")

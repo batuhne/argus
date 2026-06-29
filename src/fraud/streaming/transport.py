@@ -1,3 +1,5 @@
+"""Stream transport: connection config, durable producer settings, and replay pacing."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

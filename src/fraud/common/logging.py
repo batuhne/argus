@@ -1,3 +1,5 @@
+"""Structured logging (structlog) setup shared by every entrypoint."""
+
 import logging
 import sys
 from typing import cast

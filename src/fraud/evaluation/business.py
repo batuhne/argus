@@ -1,3 +1,5 @@
+"""Cost model: confusion counts and expected USD cost at a decision threshold."""
+
 from __future__ import annotations
 
 import math

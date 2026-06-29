@@ -1,4 +1,4 @@
-"""Point-in-time correct training frame via direct merge_asof on the offline parquet."""
+"""Point-in-time feature joins (merge_asof) and out-of-fold categorical encoding for the splits."""
 
 from __future__ import annotations
 

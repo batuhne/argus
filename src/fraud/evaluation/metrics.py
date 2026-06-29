@@ -1,3 +1,5 @@
+"""Ranking and threshold metrics: AUPRC, recall@k, classification, and the PR curve."""
+
 from __future__ import annotations
 
 import math

@@ -1,3 +1,5 @@
+"""Promotion gate: decide whether a candidate beats the champion on AUPRC and cost."""
+
 from __future__ import annotations
 
 import math

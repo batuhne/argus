@@ -115,3 +115,19 @@ rather than serving degraded predictions.
 - Expect serving pods to go NotReady after the probe failure threshold; the
   consumer holds messages and replays once Redis and serving recover.
 - Restore Redis, then confirm pods return to Ready and the consumer drains its lag.
+
+## Config and params rollout
+
+`params.yaml` is parsed into a strict typed model (`src/fraud/params.py`): unknown
+keys and out-of-range values are rejected at load, not silently ignored. Training,
+serving, and monitoring all load it at startup, so a params change and the code
+that reads it must ship in the same release.
+
+- A mismatched pair fails fast at startup rather than running on stale behaviour: an
+  old binary that meets a newly added key, or a new binary that meets a params file
+  missing a now-required key, refuses to start.
+- For serving, roll the change as one release. Readiness keeps the old replica in the
+  Service until a new replica that accepts the new params is Ready, so a bad params
+  change fails the new pods closed instead of draining the good ones.
+- If a rollout wedges on a params error, check the startup logs for the rejected key
+  or value, fix `params.yaml` to match the deployed code, and redeploy.

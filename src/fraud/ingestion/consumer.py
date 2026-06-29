@@ -1,3 +1,8 @@
+"""Consume transactions, score them through the serving API, and publish predictions.
+
+At-least-once with bounded retries, a poison-message DLQ, and a circuit breaker around serving.
+"""
+
 from __future__ import annotations
 
 import random

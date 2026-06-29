@@ -1,3 +1,5 @@
+"""Load the champion bundle (model, calibrator, encoder, threshold) from the MLflow registry."""
+
 from __future__ import annotations
 
 import os

@@ -1,3 +1,5 @@
+"""Pandera schemas that pin the raw IEEE-CIS transaction and identity columns."""
+
 import pandera.pandas as pa
 from pandera.typing import Series
 

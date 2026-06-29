@@ -1,3 +1,5 @@
+"""Choose the cost-minimizing decision threshold under a recall floor and alert budget."""
+
 from __future__ import annotations
 
 import math

@@ -1,3 +1,5 @@
+"""Build the gradient-boosted candidates (XGBoost, LightGBM, CatBoost) with class weighting."""
+
 from __future__ import annotations
 
 import warnings

@@ -1,3 +1,5 @@
+"""The model feature contract (ordered columns + X/y builder), shared by training and serving."""
+
 from __future__ import annotations
 
 import pandas as pd

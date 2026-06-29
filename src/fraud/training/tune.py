@@ -1,3 +1,5 @@
+"""Tune XGBoost with an Optuna sweep on validation AUPRC."""
+
 from __future__ import annotations
 
 import gc

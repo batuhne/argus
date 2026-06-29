@@ -4,6 +4,14 @@ Declarative manifests for running the serving image on a cluster, with shadow
 and canary progressive delivery. Local target is k3d (Traefik ships built in);
 the same manifests apply to a managed cluster.
 
+These manifests cover the serving slice only: the serving app and the stream
+consumer that calls it. The data plane they depend on (the MLflow registry, the
+Feast online store on Redis, and the Redpanda broker) runs in docker compose for
+local and demo use, and would be managed services or their own deployments in
+production. Compose runs the whole system end to end on one host; Kubernetes runs
+the latency-critical serving path with progressive delivery on top of that data
+plane (see "Prerequisites for a live apply").
+
 ## Layout
 
 - `base/` - serving Deployment, a consumer Deployment that calls `/predict` with

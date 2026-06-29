@@ -1,3 +1,5 @@
+"""Collect lineage tags (git SHA and dirty flag, Python version, file hashes) for a run."""
+
 from __future__ import annotations
 
 import hashlib

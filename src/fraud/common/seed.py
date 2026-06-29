@@ -1,3 +1,5 @@
+"""Seed the standard, NumPy, and hash RNGs so a run is reproducible."""
+
 import os
 import random
 

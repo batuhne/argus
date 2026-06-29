@@ -1,3 +1,5 @@
+"""Training-run reporting artifacts: the SHAP summary figure and the feature schema."""
+
 from __future__ import annotations
 
 from typing import Any

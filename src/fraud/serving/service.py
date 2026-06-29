@@ -1,3 +1,5 @@
+"""BentoML serving app: the authenticated /predict endpoint and its readiness checks."""
+
 from __future__ import annotations
 
 import time

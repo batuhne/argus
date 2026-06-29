@@ -1,3 +1,5 @@
+"""Score one assembled feature row with the champion bundle into a calibrated decision."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

@@ -191,3 +191,29 @@ groups:
           summary: "Monitor recompute loop has stalled"
           description: "No metrics recompute in over 60s; the consume loop may be wedged."
           runbook_url: "https://github.com/batuhne/argus/blob/main/docs/runbooks.md#monitor-exporter-down-or-stalled"
+
+      # Drift PSI runs on an offloaded worker and swallows failures to keep the consume loop
+      # alive, so a counter is the only way a silently failing drift computation surfaces.
+      - alert: MonitorDriftComputeErrors
+        expr: increase(argus_drift_compute_errors_total[15m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+          service: monitor
+        annotations:
+          summary: "Monitor drift PSI computation is failing"
+          description: "Drift PSI failed in the last 15m; feature drift detection is degraded while fast metrics still flow."
+          runbook_url: "https://github.com/batuhne/argus/blob/main/docs/runbooks.md#monitor-exporter-down-or-stalled"
+
+      # A schema mismatch makes _route drop every message, so the consume loop runs but ingests
+      # nothing; the counter is the only signal before the join silently starves.
+      - alert: MonitorPoisonMessages
+        expr: increase(argus_monitor_poison_messages_total[15m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+          service: monitor
+        annotations:
+          summary: "Monitor is dropping stream messages on schema mismatch"
+          description: "Scored-features or label messages failed validation in the last 15m; a producer may have shipped a breaking schema change."
+          runbook_url: "https://github.com/batuhne/argus/blob/main/docs/runbooks.md#monitor-exporter-down-or-stalled"

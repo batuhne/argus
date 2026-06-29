@@ -32,11 +32,11 @@ class CooldownGate:
     cooldown_seconds: float
     last_fired: float | None = None
 
-    def should_fire(self, now: float) -> bool:
-        if self.last_fired is not None and now - self.last_fired < self.cooldown_seconds:
-            return False
+    def ready(self, now: float) -> bool:
+        return self.last_fired is None or now - self.last_fired >= self.cooldown_seconds
+
+    def mark(self, now: float) -> None:
         self.last_fired = now
-        return True
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,7 +60,7 @@ class RetrainTriggerConfig:
         )
 
 
-TriggerFn = Callable[[DriftAlertEvent], None]
+TriggerFn = Callable[[DriftAlertEvent], bool]
 
 
 def run_retrain_trigger(
@@ -102,11 +102,14 @@ def _handle_alert(
     except ValidationError as exc:
         log.warning("retrain_poison_message_skipped", error=str(exc))
         return
-    if not gate.should_fire(clock()):
+    now = clock()
+    if not gate.ready(now):
         log.info("retrain_skipped_cooldown", kind=alert.kind, metric=alert.metric)
         return
     log.info("retrain_fired", kind=alert.kind, metric=alert.metric, value=alert.value)
-    trigger(alert)
+    # Hold the cooldown only on a confirmed dispatch, so a failed one retries on the next alert.
+    if trigger(alert):
+        gate.mark(now)
 
 
 def _build_consumer(cfg: RetrainTriggerConfig) -> Consumer:
@@ -126,15 +129,22 @@ def _deployment_trigger(cfg: RetrainTriggerConfig) -> TriggerFn:
     from pipelines.flows.retraining_pipeline import RETRAIN_REASON_DRIFT
     from prefect.deployments import run_deployment
 
-    def trigger(alert: DriftAlertEvent) -> None:
+    def trigger(alert: DriftAlertEvent) -> bool:
         try:
             run_deployment(
                 name=cfg.deployment_name,
                 parameters={"reason": f"{RETRAIN_REASON_DRIFT}:{alert.kind}"},
                 timeout=0,
             )
+            return True
         except Exception as exc:  # a Prefect API hiccup must not wedge the loop
-            log.error("retrain_dispatch_failed", deployment=cfg.deployment_name, error=str(exc))
+            log.error(
+                "retrain_dispatch_failed",
+                deployment=cfg.deployment_name,
+                error=str(exc),
+                exc_info=True,
+            )
+            return False
 
     return trigger
 

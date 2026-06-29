@@ -245,8 +245,8 @@ stages:
       size: 2040
     - path: src/fraud/training
       hash: md5
-      md5: b99b74913a3709f1f4c2c08dccb50e7e.dir
-      size: 28839
+      md5: ea89974c540f505a28eb1a77d351cd44.dir
+      size: 29457
       nfiles: 4
     - path: src/fraud/transforms
       hash: md5

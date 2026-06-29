@@ -58,6 +58,14 @@ LAST_RECOMPUTE = Gauge(
 SCORED_EVENTS = Counter("argus_scored_events_total", "Scored-features events consumed")
 LABEL_EVENTS = Counter("argus_label_events_total", "Label events consumed")
 DRIFT_ALERTS = Counter("argus_drift_alerts_total", "Drift alerts published", ["kind"])
+DRIFT_COMPUTE_ERRORS = Counter(
+    "argus_drift_compute_errors_total", "Drift PSI computations that failed"
+)
+MONITOR_POISON_MESSAGES = Counter(
+    "argus_monitor_poison_messages_total",
+    "Stream messages dropped on a schema mismatch",
+    ["topic"],
+)
 
 
 def _feature_value(value: float | None) -> float:
@@ -180,7 +188,8 @@ class MonitorState:
         except Exception as exc:
             # This runs on the drift worker; a failure here must skip the cycle, not propagate
             # into the future and take down the consume loop. Fast metrics still update.
-            log.warning("drift_computation_skipped", error=str(exc))
+            DRIFT_COMPUTE_ERRORS.inc()
+            log.error("drift_computation_failed", error=str(exc), exc_info=True)
             return None
 
     def apply_drift(self, drift: FeatureDrift | None) -> list[DriftAlertEvent]:
@@ -268,8 +277,11 @@ def run_exporter(cfg: MonitoringConfig, shutdown: ShutdownFlag | None = None) ->
     try:
         while not shutdown.requested:
             message = consumer.poll(POLL_TIMEOUT_SECONDS)
-            if message is not None and message.error() is None:
-                _route(state, cfg, message)
+            if message is not None:
+                if message.error() is not None:
+                    log.warning("monitor_consume_error", error=str(message.error()))
+                else:
+                    _route(state, cfg, message)
             if time.monotonic() - last_recompute >= cfg.recompute_interval_seconds:
                 drift_job = _run_recompute_cycle(state, executor, drift_job)
                 last_recompute = time.monotonic()
@@ -329,6 +341,7 @@ def _route(state: MonitorState, cfg: MonitoringConfig, message: Message) -> None
             label = deserialize_label(payload)
             state.handle_label(label.transaction_id, label.is_fraud, event_time=event_time)
     except ValidationError as exc:
+        MONITOR_POISON_MESSAGES.labels(topic=message.topic()).inc()
         log.warning("monitor_message_skipped", topic=message.topic(), error=str(exc))
 
 

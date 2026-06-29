@@ -35,18 +35,26 @@ def _alert_bytes() -> bytes:
     )
 
 
-def _drive(payload: bytes | None, gate: CooldownGate, now: float) -> list[DriftAlertEvent]:
+def _drive(
+    payload: bytes | None, gate: CooldownGate, now: float, *, dispatched: bool = True
+) -> list[DriftAlertEvent]:
     fired: list[DriftAlertEvent] = []
+
+    def trigger(alert: DriftAlertEvent) -> bool:
+        fired.append(alert)
+        return dispatched
+
     message = cast(Message, _FakeMessage(payload))
-    _handle_alert(message, gate, fired.append, lambda: now)
+    _handle_alert(message, gate, trigger, lambda: now)
     return fired
 
 
 def test_cooldown_gate_collapses_burst_then_reopens() -> None:
     gate = CooldownGate(cooldown_seconds=100.0)
-    assert gate.should_fire(0.0)
-    assert not gate.should_fire(50.0)
-    assert gate.should_fire(100.0)
+    assert gate.ready(0.0)
+    gate.mark(0.0)
+    assert not gate.ready(50.0)
+    assert gate.ready(100.0)
 
 
 def test_handle_alert_fires_trigger_for_valid_alert() -> None:
@@ -69,6 +77,14 @@ def test_handle_alert_honors_cooldown_across_calls() -> None:
     second = _drive(_alert_bytes(), gate, 10.0)
     assert len(first) == 1
     assert second == []
+
+
+def test_handle_alert_failed_dispatch_does_not_hold_cooldown() -> None:
+    gate = CooldownGate(100.0)
+    first = _drive(_alert_bytes(), gate, 0.0, dispatched=False)
+    second = _drive(_alert_bytes(), gate, 10.0, dispatched=True)
+    assert len(first) == 1
+    assert len(second) == 1
 
 
 def test_config_from_settings_binds_drift_topic_and_retrain_group() -> None:

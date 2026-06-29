@@ -83,12 +83,18 @@ enough matched labels to be meaningful.
 `MonitorJoinClockStalled` fires when the join clock trails wall-clock while events
 are still flowing (gated on live ingest, so a finished replay reads as idle, not a
 stall). `MonitorRecomputeStalled` fires when the recompute timestamp stops
-advancing, catching a wedged loop that is still scrapable.
+advancing, catching a wedged loop that is still scrapable. `MonitorDriftComputeErrors`
+fires when PSI computation is throwing on the drift worker, so feature-drift detection
+is degraded even though fast metrics still flow.
 
 - Down: check the monitoring container or pod; it rebuilds state from the retention
   window on restart, so a restart is safe.
 - Behind or wedged: confirm the producer and label simulator are running, then check
   the consume loop for a hung poll. A restart rebuilds from the retention window.
+- Drift failing: check the monitor logs for `drift_computation_failed`; a malformed
+  baseline or an all-constant feature window is the usual cause. Fast metrics are unaffected.
+- Schema mismatch: a spike in `argus_monitor_poison_messages_total` means messages are failing
+  validation; check the producer schema against the event models. The loop runs but ingests nothing.
 
 ## API key rotation
 

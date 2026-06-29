@@ -7,10 +7,12 @@ from typing import Any
 import pandas as pd
 import pytest
 from confluent_kafka import OFFSET_END, TopicPartition
+from prometheus_client import REGISTRY
 
 from fraud.monitoring.config import MonitoringConfig
 from fraud.monitoring.drift import FeatureDrift
 from fraud.monitoring.exporter import (
+    DRIFT_COMPUTE_ERRORS,
     DRIFT_KIND_DATA,
     DRIFT_KIND_PERF,
     FEATURE_PSI,
@@ -137,9 +139,11 @@ def test_recompute_survives_drift_failure() -> None:
     state.handle_scored_features(_scored("t-1"), event_time=0.0)
 
     # A degenerate window makes drift raise; recompute must not crash the monitor.
+    before = _gauge(DRIFT_COMPUTE_ERRORS)
     state.recompute()
 
     assert producer.produced == []
+    assert _gauge(DRIFT_COMPUTE_ERRORS) == before + 1.0
 
 
 def _gauge(metric: Any) -> float:
@@ -278,7 +282,14 @@ def test_route_skips_poison_message_without_raising() -> None:
         def timestamp(self) -> tuple[int, int]:
             return (1, 0)
 
+    before = REGISTRY.get_sample_value(
+        "argus_monitor_poison_messages_total", {"topic": cfg.scored_features_topic}
+    )
     _route(state, cfg, _Msg())  # type: ignore[arg-type]
+    after = REGISTRY.get_sample_value(
+        "argus_monitor_poison_messages_total", {"topic": cfg.scored_features_topic}
+    )
+    assert (after or 0.0) == (before or 0.0) + 1.0
     # A valid scored-features message is handled.
     valid = serialize(_scored("t-1"))
 

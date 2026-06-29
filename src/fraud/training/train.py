@@ -183,6 +183,7 @@ def train_with_splits(
     _log_training_start(cfg, splits)
     with mlflow.start_run(run_name=cfg.run_name) as parent:
         _log_lineage_tags(splits)
+        _log_run_constraints(cfg)
         best = _sweep_xgb(splits, cfg)
         primary = _train_and_pick_primary(best, splits, cfg)
         version = _log_artifacts(primary, splits, cfg, encoder)
@@ -203,6 +204,20 @@ def train_with_splits(
         model_version=version,
         primary=primary,
         gate=outcome,
+    )
+
+
+def _log_run_constraints(cfg: TrainingConfig) -> None:
+    # Threshold and gate constraints are what make a run's decision reproducible.
+    mlflow.log_params(
+        {
+            "recall_floor": cfg.threshold_constraints.recall_floor,
+            "alert_volume_budget": cfg.threshold_constraints.alert_volume_budget,
+            "auprc_tolerance": cfg.gate_tolerances.auprc_tolerance,
+            "cost_tolerance": cfg.gate_tolerances.cost_tolerance,
+            "fn_cost_usd": cfg.cost_matrix.fn_cost_usd,
+            "fp_cost_usd": cfg.cost_matrix.fp_cost_usd,
+        }
     )
 
 

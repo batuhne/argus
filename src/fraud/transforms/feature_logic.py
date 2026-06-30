@@ -132,10 +132,11 @@ def compute_card_velocity(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def coerce_numeric(frame: pd.DataFrame, columns: Sequence[str]) -> pd.DataFrame:
-    """Cast the passthrough columns to float32, keeping NaN (the trees split on it)."""
+    """Cast passthrough columns to float32; non-finite (incl. float32 overflow) becomes NaN."""
     out = frame.copy()
     for column in columns:
-        out[column] = pd.to_numeric(frame[column], errors="coerce").astype("float32")
+        coerced = pd.to_numeric(frame[column], errors="coerce").astype("float32")
+        out[column] = coerced.where(np.isfinite(coerced))
     return out
 
 

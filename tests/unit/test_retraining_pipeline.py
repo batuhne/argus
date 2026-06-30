@@ -38,7 +38,9 @@ def _result(*, promote: bool, reason: str) -> TrainingResult:
         val_metrics={"auprc": 0.1},
         test_metrics={"auprc": 0.1},
     )
-    return TrainingResult(run_id="run-1", model_version=7, primary=primary, gate=gate)
+    return TrainingResult(
+        run_id="run-1", model_version=7, champion_version=7, primary=primary, gate=gate
+    )
 
 
 def test_outcome_maps_promoted_challenger() -> None:

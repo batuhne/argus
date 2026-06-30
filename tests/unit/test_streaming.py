@@ -130,6 +130,23 @@ def test_raw_attributes_rejects_too_many_vector_entries() -> None:
         RawAttributes(v={f"V{i}": 1.0 for i in range(MAX_RAW_VECTOR_ENTRIES + 1)})
 
 
+@pytest.mark.parametrize("value", [float("inf"), float("-inf"), float("nan")])
+def test_raw_attributes_rejects_non_finite_numeric(value: float) -> None:
+    with pytest.raises(ValidationError):
+        RawAttributes(C1=value)
+
+
+def test_raw_attributes_rejects_non_finite_v_value() -> None:
+    with pytest.raises(ValidationError):
+        RawAttributes(v={"V147": float("inf")})
+
+
+def test_raw_attributes_rejects_non_finite_json_token() -> None:
+    # pydantic's JSON parser accepts the Infinity token; FiniteFloat is what rejects the value.
+    with pytest.raises(ValidationError):
+        RawAttributes.model_validate_json('{"C1": Infinity}')
+
+
 def test_deserialize_rejects_malformed_payload() -> None:
     with pytest.raises(ValidationError):
         deserialize_transaction(b'{"transaction_id": "t-1"}')

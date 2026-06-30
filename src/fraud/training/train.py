@@ -159,6 +159,7 @@ class GateOutcome:
 class TrainingResult:
     run_id: str
     model_version: int
+    champion_version: int | None
     primary: ModelResult
     gate: GateOutcome
 
@@ -189,11 +190,15 @@ def train_with_splits(
         version = _log_artifacts(primary, splits, cfg, encoder)
         attach_alias(cfg.model_name, version, alias=cfg.candidate_alias)
         mlflow.set_tag("model_version", str(version))
+        prior_champion = get_alias_version(cfg.model_name, cfg.champion_alias)
         outcome = _evaluate_and_gate(primary, splits, version, cfg)
+    # compute, don't re-read: a concurrent alias move would misattribute the champion
+    champion_version = version if outcome.decision.promote else prior_champion
     log.info(
         "training_done",
         run_id=parent.info.run_id,
         model_version=version,
+        champion_version=champion_version,
         primary=primary.family,
         val_auprc=primary.val_metrics["auprc"],
         gate_promote=outcome.decision.promote,
@@ -202,6 +207,7 @@ def train_with_splits(
     return TrainingResult(
         run_id=parent.info.run_id,
         model_version=version,
+        champion_version=champion_version,
         primary=primary,
         gate=outcome,
     )
@@ -617,6 +623,7 @@ def _write_run_marker(artifacts_dir: Path, result: TrainingResult) -> None:
     payload = {
         "run_id": result.run_id,
         "model_version": result.model_version,
+        "champion_version": result.champion_version,
         "primary": result.primary.family,
         "metrics": result.primary.val_metrics,
         "threshold": {
@@ -634,7 +641,9 @@ def _write_run_marker(artifacts_dir: Path, result: TrainingResult) -> None:
             "reason": result.gate.decision.reason,
         },
     }
-    (artifacts_dir / "last_run.json").write_text(json.dumps(payload, indent=2))
+    tmp = artifacts_dir / "last_run.json.tmp"
+    tmp.write_text(json.dumps(payload, indent=2))
+    tmp.replace(artifacts_dir / "last_run.json")
 
 
 if __name__ == "__main__":

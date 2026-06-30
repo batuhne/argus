@@ -109,6 +109,7 @@ def run_backtest(cfg: BacktestConfig) -> BacktestReport:
     mlflow.set_tracking_uri(cfg.tracking_uri)
     mlflow.set_experiment(cfg.experiment_name)
     bundle = load_champion(ChampionLoadConfig.from_settings())
+    _verify_recorded_champion(bundle.version, cfg.artifacts_dir / "last_run.json")
     x, y = _load_holdout_xy(bundle, cfg)
     calibrated = _calibrated_scores(bundle, x)
     report = evaluate_holdout(
@@ -128,6 +129,24 @@ def run_backtest(cfg: BacktestConfig) -> BacktestReport:
         holdout_cost_per_tx=report.expected_cost_per_tx_usd,
     )
     return report
+
+
+def _verify_recorded_champion(loaded_version: int, marker_path: Path) -> None:
+    """Raise if the loaded champion is not the version train recorded as champion."""
+    if not marker_path.exists():
+        log.warning(
+            "champion_provenance_check_skipped", reason="marker_absent", path=str(marker_path)
+        )
+        return
+    recorded = json.loads(marker_path.read_text()).get("champion_version")
+    if recorded is None:
+        log.warning("champion_provenance_check_skipped", reason="champion_version_unrecorded")
+        return
+    if loaded_version != recorded:
+        raise RuntimeError(
+            f"backtest loaded champion version {loaded_version}, but {marker_path.name} recorded "
+            f"version {recorded}; the champion alias moved between train and backtest"
+        )
 
 
 def _load_holdout_xy(bundle: ModelBundle, cfg: BacktestConfig) -> tuple[pd.DataFrame, pd.Series]:

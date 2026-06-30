@@ -111,14 +111,13 @@ def build_eval_frame(
     Transform only, no refit, so no label from the evaluated rows leaks into its own features.
     """
     frame = build_training_frame(split, repo_dir, processed_dir)
-    _attach_encoded(frame, encoder.transform(frame))
-    return frame
+    return _attach_encoded(frame, encoder.transform(frame))
 
 
 def add_encoded_categoricals(
     frames: dict[str, pd.DataFrame], *, seed: int, smoothing: float, n_splits: int
 ) -> CategoricalEncoder:
-    """Fit the encoder on train and add encoded columns to every split in place.
+    """Fit the encoder on train and replace each split in the dict with its encoded frame.
 
     Train rows get leak-free out-of-fold target values; val and test use the full-train
     maps. The returned encoder holds those full-train maps, so serving encodes identically.
@@ -131,16 +130,17 @@ def add_encoded_categoricals(
         smoothing=smoothing,
         n_splits=n_splits,
     )
-    _attach_encoded(frames["train"], train_encoded)
-    for split, frame in frames.items():
-        if split != "train":
-            _attach_encoded(frame, encoder.transform(frame))
+    frames["train"] = _attach_encoded(frames["train"], train_encoded)
+    for split in [name for name in frames if name != "train"]:
+        frames[split] = _attach_encoded(frames[split], encoder.transform(frames[split]))
     return encoder
 
 
-def _attach_encoded(frame: pd.DataFrame, encoded: pd.DataFrame) -> None:
-    for column in encoded.columns:
-        frame[column] = encoded[column]
+def _attach_encoded(frame: pd.DataFrame, encoded: pd.DataFrame) -> pd.DataFrame:
+    overlap = frame.columns.intersection(encoded.columns)
+    if not overlap.empty:
+        raise ValueError(f"encoded columns already present in frame: {list(overlap)}")
+    return pd.concat([frame, encoded], axis=1)
 
 
 def main() -> None:

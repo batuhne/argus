@@ -21,6 +21,17 @@ def test_encoded_feature_names_match_transform_output_order() -> None:
     assert encoded_feature_names(["x", "y"]) == tuple(out.columns)
 
 
+def test_transform_single_row_matches_batch() -> None:
+    frame = pd.DataFrame(
+        {"x": ["a", "b", "a", "c"], "y": ["p", "q", "p", "p"], LABEL_COLUMN: [0, 1, 0, 1]}
+    )
+    encoder = fit_encoder(frame, ["x", "y"], LABEL_COLUMN, smoothing=20.0)
+    batch = encoder.transform(frame)
+
+    for i in range(len(frame)):
+        pd.testing.assert_frame_equal(encoder.transform(frame.iloc[[i]]), batch.iloc[[i]])
+
+
 def test_transform_outputs_named_float32_columns() -> None:
     frame = pd.DataFrame({"cat": ["a", "b"], LABEL_COLUMN: [0, 1]})
 

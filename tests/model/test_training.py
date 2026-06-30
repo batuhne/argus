@@ -4,6 +4,7 @@ from collections.abc import Callable
 import pandas as pd
 import pytest
 
+from fraud.evaluation.backtest import _verify_recorded_champion
 from fraud.evaluation.business import CostMatrix
 from fraud.evaluation.gate import (
     GATE_BOOTSTRAP,
@@ -18,7 +19,7 @@ from fraud.registry import (
     get_alias_version,
     get_version_tags,
 )
-from fraud.training.train import TrainingConfig, train_with_splits
+from fraud.training.train import TrainingConfig, _write_run_marker, train_with_splits
 from fraud.transforms.encoders import CategoricalEncoder
 
 pytestmark = pytest.mark.integration
@@ -80,6 +81,7 @@ def test_train_with_splits_bootstraps_champion_on_first_run(
     result = train_with_splits(cfg, splits, _stub_encoder())
 
     assert result.model_version == 1
+    assert result.champion_version == 1
     assert result.primary.val_metrics["auprc"] > 0.7
     assert result.gate.decision.promote
     assert result.gate.decision.reason == GATE_BOOTSTRAP
@@ -87,6 +89,12 @@ def test_train_with_splits_bootstraps_champion_on_first_run(
     tags = get_version_tags(cfg.model_name, 1)
     assert CHAMPION_TAG_AUPRC in tags
     assert CHAMPION_TAG_COST_PER_TX in tags
+
+    _write_run_marker(cfg.artifacts_dir, result)
+    marker = cfg.artifacts_dir / "last_run.json"
+    _verify_recorded_champion(result.champion_version, marker)
+    with pytest.raises(RuntimeError, match="alias moved"):
+        _verify_recorded_champion(result.champion_version + 1, marker)
 
 
 def test_gate_blocks_promotion_when_challenger_cost_regresses(
@@ -119,6 +127,7 @@ def test_gate_blocks_promotion_when_challenger_cost_regresses(
     second_run = train_with_splits(cfg, splits, _stub_encoder())
 
     assert second_run.model_version == 2
+    assert second_run.champion_version == 1
     assert second_run.gate.decision.promote is False
     assert second_run.gate.decision.reason in {GATE_COST_REGRESSION, "both_regression"}
     assert get_alias_version(cfg.model_name, cfg.champion_alias) == 1

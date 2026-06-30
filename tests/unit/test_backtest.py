@@ -1,8 +1,11 @@
+import json
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
 
-from fraud.evaluation.backtest import evaluate_holdout
+from fraud.evaluation.backtest import _verify_recorded_champion, evaluate_holdout
 from fraud.evaluation.business import CostMatrix
 
 
@@ -43,3 +46,33 @@ def test_evaluate_holdout_costs_missed_fraud_above_every_score() -> None:
     # Two false negatives at $100 each, spread over four transactions.
     assert report.expected_cost_total_usd == pytest.approx(200.0)
     assert report.expected_cost_per_tx_usd == pytest.approx(50.0)
+
+
+def _write_marker(path: Path, champion_version: object) -> None:
+    path.write_text(json.dumps({"champion_version": champion_version}))
+
+
+def test_verify_recorded_champion_passes_when_versions_match(tmp_path: Path) -> None:
+    marker = tmp_path / "last_run.json"
+    _write_marker(marker, 7)
+
+    _verify_recorded_champion(7, marker)
+
+
+def test_verify_recorded_champion_raises_when_alias_drifted(tmp_path: Path) -> None:
+    marker = tmp_path / "last_run.json"
+    _write_marker(marker, 7)
+
+    with pytest.raises(RuntimeError, match="alias moved"):
+        _verify_recorded_champion(8, marker)
+
+
+def test_verify_recorded_champion_skips_when_marker_absent(tmp_path: Path) -> None:
+    _verify_recorded_champion(8, tmp_path / "missing.json")
+
+
+def test_verify_recorded_champion_skips_when_version_unrecorded(tmp_path: Path) -> None:
+    marker = tmp_path / "last_run.json"
+    _write_marker(marker, None)
+
+    _verify_recorded_champion(8, marker)

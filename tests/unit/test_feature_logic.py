@@ -115,6 +115,19 @@ def test_coerce_numeric_turns_unparseable_into_nan() -> None:
     assert out["C1"].iloc[1] == 2.0
 
 
+def test_coerce_numeric_maps_non_finite_to_nan() -> None:
+    frame = pd.DataFrame({"C1": [1.0, np.inf, -np.inf], "D1": [1e300, 2.0, 3.0]})
+
+    with np.errstate(over="ignore"):  # 1e300 overflows float32 on the cast
+        out = fl.coerce_numeric(frame, ["C1", "D1"])
+
+    assert out["C1"].iloc[0] == 1.0
+    assert np.isnan(out["C1"].iloc[1])
+    assert np.isnan(out["C1"].iloc[2])
+    assert np.isnan(out["D1"].iloc[0])
+    assert out["D1"].iloc[1] == 2.0
+
+
 def test_coerce_numeric_does_not_mutate_input() -> None:
     frame = pd.DataFrame({"C1": ["x"]})
 

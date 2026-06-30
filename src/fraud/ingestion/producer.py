@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 from collections.abc import Hashable, Iterator
 from pathlib import Path
@@ -100,8 +101,11 @@ def _raw_attributes(record: dict[Hashable, Any]) -> RawAttributes:
 
 
 def _optional_float(value: Any) -> float | None:
-    # NaN means the field was blank; send null so the JSON stays standard.
-    return None if pd.isna(value) else float(value)
+    # blank or non-finite has no usable number; send null
+    if pd.isna(value):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
 
 
 def _optional_str(value: Any) -> str | None:

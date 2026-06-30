@@ -5,9 +5,11 @@ Plus topic and group name constants, serialization, and payload bounds.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, StringConstraints
+
+OptionalFiniteFloat: TypeAlias = FiniteFloat | None
 
 # Abuse bounds on the request contract: a request past these is malformed, not a sale.
 MAX_TRANSACTION_AMOUNT = 1_000_000.0
@@ -32,42 +34,44 @@ class RawAttributes(BaseModel):
 
     model_config = ConfigDict(extra="forbid")  # a misnamed field is an error, not a silent NaN
 
-    C1: float | None = None
-    C2: float | None = None
-    C3: float | None = None
-    C4: float | None = None
-    C5: float | None = None
-    C6: float | None = None
-    C7: float | None = None
-    C8: float | None = None
-    C9: float | None = None
-    C10: float | None = None
-    C11: float | None = None
-    C12: float | None = None
-    C13: float | None = None
-    C14: float | None = None
-    D1: float | None = None
-    D2: float | None = None
-    D3: float | None = None
-    D4: float | None = None
-    D5: float | None = None
-    D6: float | None = None
-    D7: float | None = None
-    D8: float | None = None
-    D9: float | None = None
-    D10: float | None = None
-    D11: float | None = None
-    D12: float | None = None
-    D13: float | None = None
-    D14: float | None = None
-    D15: float | None = None
-    dist1: float | None = None
-    dist2: float | None = None
-    addr1: float | None = None
-    addr2: float | None = None
+    C1: OptionalFiniteFloat = None
+    C2: OptionalFiniteFloat = None
+    C3: OptionalFiniteFloat = None
+    C4: OptionalFiniteFloat = None
+    C5: OptionalFiniteFloat = None
+    C6: OptionalFiniteFloat = None
+    C7: OptionalFiniteFloat = None
+    C8: OptionalFiniteFloat = None
+    C9: OptionalFiniteFloat = None
+    C10: OptionalFiniteFloat = None
+    C11: OptionalFiniteFloat = None
+    C12: OptionalFiniteFloat = None
+    C13: OptionalFiniteFloat = None
+    C14: OptionalFiniteFloat = None
+    D1: OptionalFiniteFloat = None
+    D2: OptionalFiniteFloat = None
+    D3: OptionalFiniteFloat = None
+    D4: OptionalFiniteFloat = None
+    D5: OptionalFiniteFloat = None
+    D6: OptionalFiniteFloat = None
+    D7: OptionalFiniteFloat = None
+    D8: OptionalFiniteFloat = None
+    D9: OptionalFiniteFloat = None
+    D10: OptionalFiniteFloat = None
+    D11: OptionalFiniteFloat = None
+    D12: OptionalFiniteFloat = None
+    D13: OptionalFiniteFloat = None
+    D14: OptionalFiniteFloat = None
+    D15: OptionalFiniteFloat = None
+    dist1: OptionalFiniteFloat = None
+    dist2: OptionalFiniteFloat = None
+    addr1: OptionalFiniteFloat = None
+    addr2: OptionalFiniteFloat = None
     # The reduced V set is frozen at selection time, so it rides as a dict keyed by name
     # rather than fixed fields; serving reindexes it to feature_logic.V_SELECTED.
-    v: dict[str, float | None] = Field(default_factory=dict, max_length=MAX_RAW_VECTOR_ENTRIES)
+    v: dict[str, OptionalFiniteFloat] = Field(
+        default_factory=dict, max_length=MAX_RAW_VECTOR_ENTRIES
+    )
     # Curated categoricals ride the same way; serving reindexes them to CATEGORICAL_COLUMNS
     # and the encoder turns them into features.
     categorical: dict[

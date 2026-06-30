@@ -16,7 +16,12 @@ from fraud.serving.features import OnlineFeatureFetcher, redis_reachable
 from fraud.serving.inference_log import InferenceLogger
 from fraud.serving.predict import score_transaction
 from fraud.serving.security import MAX_REQUEST_BYTES, BodySizeLimitMiddleware, verify_api_key
-from fraud.streaming.events import MAX_TRANSACTION_AMOUNT, RawAttributes, ScoredFeaturesEvent
+from fraud.streaming.events import (
+    MAX_TRANSACTION_AMOUNT,
+    PredictResponse,
+    RawAttributes,
+    ScoredFeaturesEvent,
+)
 
 log = get_logger(__name__)
 
@@ -37,15 +42,6 @@ class PredictRequest(BaseModel):
     amount: float = Field(gt=0.0, le=MAX_TRANSACTION_AMOUNT)
     transaction_id: str | None = Field(default=None, max_length=128)
     raw: RawAttributes = Field(default_factory=RawAttributes)
-
-
-class PredictResponse(BaseModel):
-    transaction_id: str | None
-    fraud_score: float
-    decision: bool
-    threshold: float
-    model_version: int
-    latency_ms: float
 
 
 @bentoml.service(

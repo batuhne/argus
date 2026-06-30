@@ -1,4 +1,7 @@
-"""Stream event models, topic and group name constants, serialization, and payload bounds."""
+"""Stream event models and the serving predict response contract.
+
+Plus topic and group name constants, serialization, and payload bounds.
+"""
 
 from __future__ import annotations
 
@@ -80,21 +83,36 @@ class TransactionEvent(BaseModel):
     raw: RawAttributes = Field(default_factory=RawAttributes)
 
 
+class PredictResponse(BaseModel):
+    """Serving's /predict reply, validated by the consumer into a shared contract.
+
+    transaction_id and latency_ms are serving annotations the consumer ignores; the required
+    core is the scoring fields it maps onto PredictionEvent.
+    """
+
+    transaction_id: str | None = Field(default=None, max_length=128)
+    fraud_score: float = Field(ge=0.0, le=1.0)
+    decision: bool
+    threshold: float = Field(ge=0.0, le=1.0)
+    model_version: int = Field(ge=1)
+    latency_ms: float | None = Field(default=None, ge=0.0)
+
+
 class PredictionEvent(BaseModel):
     transaction_id: str
     card_id: str
-    fraud_score: float
+    fraud_score: float = Field(ge=0.0, le=1.0)
     decision: bool
-    threshold: float
-    model_version: int
+    threshold: float = Field(ge=0.0, le=1.0)
+    model_version: int = Field(ge=1)
 
 
 class ScoredFeaturesEvent(BaseModel):
     """Inference log emitted by serving: the exact features the model scored."""
 
     transaction_id: str = Field(min_length=1, max_length=128)
-    model_version: int
-    fraud_score: float
+    model_version: int = Field(ge=1)
+    fraud_score: float = Field(ge=0.0, le=1.0)
     decision: bool
     features: dict[str, float | None]  # null marks a missing raw numeric
 

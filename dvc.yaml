@@ -89,6 +89,7 @@ stages:
       - src/fraud/transforms
       - src/fraud/evaluation
       - src/fraud/common
+      - src/fraud/calibrator.py
       - src/fraud/config.py
       - src/fraud/dataset.py
       - src/fraud/params.py
@@ -113,6 +114,7 @@ stages:
       - src/fraud/evaluation
       - src/fraud/transforms
       - src/fraud/common
+      - src/fraud/calibrator.py
       - src/fraud/config.py
       - src/fraud/dataset.py
       - src/fraud/model_loader.py

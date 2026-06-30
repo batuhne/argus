@@ -16,9 +16,9 @@ import mlflow.lightgbm
 import mlflow.xgboost
 from mlflow.exceptions import MlflowException
 
+from fraud.calibrator import IsotonicCalibrator
 from fraud.common.logging import get_logger
 from fraud.config import get_settings
-from fraud.evaluation.calibration import IsotonicCalibrator
 from fraud.params import load_params
 from fraud.registry import (
     CALIBRATOR_ARTIFACT_PATH,

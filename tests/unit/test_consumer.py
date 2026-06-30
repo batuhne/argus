@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
 from pathlib import Path
@@ -56,6 +57,7 @@ def _breaker() -> _CircuitBreaker:
     return _CircuitBreaker(threshold=3, cooldown_seconds=10.0)
 
 
+# transaction_id and latency_ms omitted on purpose: optional, and the consumer ignores them.
 _PREDICT_BODY = {"fraud_score": 0.12, "decision": False, "threshold": 0.07, "model_version": 5}
 
 
@@ -70,8 +72,9 @@ class _FakeResponse:
         self._payload = payload or {}
         self.headers = headers or {}
 
-    def json(self) -> dict[str, Any]:
-        return self._payload
+    @property
+    def content(self) -> bytes:
+        return json.dumps(self._payload).encode("utf-8")
 
 
 class _FakeSession:
@@ -211,10 +214,24 @@ def test_predict_request_body_forwards_raw_vector() -> None:
 
 
 def test_prediction_from_response_maps_fields() -> None:
-    prediction = prediction_from_response(_event(), _PREDICT_BODY)
+    prediction = prediction_from_response(_event(), _FakeResponse(200, _PREDICT_BODY))  # type: ignore[arg-type]
+    assert prediction is not None
     assert prediction.transaction_id == "t-1"
     assert prediction.decision is False
     assert prediction.model_version == 5
+
+
+def test_prediction_from_response_returns_none_on_malformed_body() -> None:
+    # A 2xx whose body breaks the contract must not crash the loop on a missing field.
+    response = _FakeResponse(200, {"fraud_score": 0.1})
+    assert prediction_from_response(_event(), response) is None  # type: ignore[arg-type]
+
+
+def test_fetch_prediction_unavailable_on_malformed_success_body() -> None:
+    session = _FakeSession([_FakeResponse(200, {"fraud_score": 0.1})])
+    result = _fetch_prediction(_cfg(), session, _event(), ShutdownFlag())  # type: ignore[arg-type]
+    assert result.outcome is FetchOutcome.UNAVAILABLE
+    assert session.calls == 1
 
 
 def test_fetch_prediction_returns_event_on_success() -> None:
@@ -394,6 +411,18 @@ def test_handle_message_counts_throttle_toward_breaker(monkeypatch: pytest.Monke
 def test_handle_message_holds_offset_when_serving_unavailable() -> None:
     producer, consumer = _FakeProducer(), _FakeConsumer()
     session = _FakeSession([_FakeResponse(503)] * MAX_PREDICT_RETRIES)
+    breaker = _breaker()
+    committed = _handle(_FakeMessage(_payload()), session, producer, consumer, breaker)
+    assert committed is False
+    assert consumer.commits == 0
+    assert producer.produced == []
+    assert breaker.failures == 1
+
+
+def test_handle_message_holds_offset_on_malformed_success_body() -> None:
+    # A 2xx that breaks the contract holds the message instead of dropping or dead-lettering it.
+    producer, consumer = _FakeProducer(), _FakeConsumer()
+    session = _FakeSession([_FakeResponse(200, {"fraud_score": 0.1})])
     breaker = _breaker()
     committed = _handle(_FakeMessage(_payload()), session, producer, consumer, breaker)
     assert committed is False

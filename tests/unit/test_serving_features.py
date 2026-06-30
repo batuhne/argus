@@ -25,7 +25,7 @@ def encoder() -> CategoricalEncoder:
         {column: rng.choice(["a", "b", "c"], rows) for column in fl.CATEGORICAL_COLUMNS}
     )
     frame[LABEL_COLUMN] = rng.integers(0, 2, rows)
-    return fit_encoder(frame, fl.CATEGORICAL_COLUMNS, LABEL_COLUMN)
+    return fit_encoder(frame, fl.CATEGORICAL_COLUMNS, LABEL_COLUMN, smoothing=20.0)
 
 
 def _online_row() -> pd.DataFrame:

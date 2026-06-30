@@ -11,18 +11,10 @@ from sklearn.calibration import calibration_curve
 from sklearn.isotonic import IsotonicRegression
 from sklearn.metrics import brier_score_loss
 
+from fraud.calibrator import IsotonicCalibrator
+
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
-
-
-@dataclass(frozen=True, slots=True)
-class IsotonicCalibrator:
-    regressor: IsotonicRegression
-
-    def predict(self, raw_scores: ArrayLike) -> NDArray[np.float64]:
-        scores = np.asarray(raw_scores, dtype=np.float64)
-        clipped: NDArray[np.float64] = np.clip(self.regressor.predict(scores), 0.0, 1.0)
-        return clipped
 
 
 @dataclass(frozen=True, slots=True)

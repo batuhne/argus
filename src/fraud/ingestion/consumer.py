@@ -23,6 +23,7 @@ from fraud.common.shutdown import ShutdownFlag, install_shutdown_handler
 from fraud.config import get_settings
 from fraud.streaming.events import (
     PredictionEvent,
+    PredictResponse,
     TransactionEvent,
     deserialize_transaction,
     serialize,
@@ -234,9 +235,10 @@ def _fetch_prediction(
             _backoff(attempt)
             continue
         if response.status_code < CLIENT_ERROR_START:
-            return PredictionResult(
-                FetchOutcome.OK, prediction_from_response(event, response.json())
-            )
+            prediction = prediction_from_response(event, response)
+            if prediction is None:
+                return PredictionResult(FetchOutcome.UNAVAILABLE)
+            return PredictionResult(FetchOutcome.OK, prediction)
         if response.status_code == TOO_MANY_REQUESTS:
             # Shedding: honor Retry-After and let the breaker open now instead of burning the
             # whole retry budget per message, which would only pile more load on the server.
@@ -315,14 +317,24 @@ def predict_request_body(event: TransactionEvent) -> dict[str, dict[str, Any]]:
     }
 
 
-def prediction_from_response(event: TransactionEvent, body: dict[str, Any]) -> PredictionEvent:
+def prediction_from_response(
+    event: TransactionEvent, response: requests.Response
+) -> PredictionEvent | None:
+    """Validate the serving reply against the shared contract; None if it does not parse."""
+    try:
+        scored = PredictResponse.model_validate_json(response.content)
+    except ValidationError as exc:
+        # Serving returned a 2xx that breaks the shared contract; log loud so a deploy skew
+        # is visible while the message holds for retry rather than crashing the loop.
+        log.error("predict_response_malformed", transaction_id=event.transaction_id, error=str(exc))
+        return None
     return PredictionEvent(
         transaction_id=event.transaction_id,
         card_id=event.card_id,
-        fraud_score=float(body["fraud_score"]),
-        decision=bool(body["decision"]),
-        threshold=float(body["threshold"]),
-        model_version=int(body["model_version"]),
+        fraud_score=scored.fraud_score,
+        decision=scored.decision,
+        threshold=scored.threshold,
+        model_version=scored.model_version,
     )
 
 

@@ -15,8 +15,6 @@ from sklearn.model_selection import StratifiedKFold
 MISSING = "__missing__"
 FREQ_SUFFIX = "_freq"
 TARGET_SUFFIX = "_target"
-DEFAULT_SMOOTHING = 20.0
-DEFAULT_N_SPLITS = 5
 
 
 def encoded_feature_names(columns: Sequence[str]) -> tuple[str, ...]:
@@ -53,7 +51,8 @@ def fit_encoder(
     frame: pd.DataFrame,
     columns: Sequence[str],
     label: str,
-    smoothing: float = DEFAULT_SMOOTHING,
+    *,
+    smoothing: float,
 ) -> CategoricalEncoder:
     """Fit the full-train maps used for val, test, and serving."""
     prior = float(frame[label].mean())
@@ -70,15 +69,15 @@ def fit_transform_oof(
     label: str,
     *,
     seed: int,
-    smoothing: float = DEFAULT_SMOOTHING,
-    n_splits: int = DEFAULT_N_SPLITS,
+    smoothing: float,
+    n_splits: int,
 ) -> tuple[CategoricalEncoder, pd.DataFrame]:
     """Return the encoder to persist for serving, plus the out-of-fold matrix to train on.
 
     Out-of-fold is what stops target encoding from leaking: a row never sees its own label.
     """
     _require_enough_per_class(frame[label], n_splits)
-    encoder = fit_encoder(frame, columns, label, smoothing)
+    encoder = fit_encoder(frame, columns, label, smoothing=smoothing)
     encoded: dict[str, pd.Series] = {
         f"{col}{FREQ_SUFFIX}": _as_keys(frame[col]).map(encoder.frequency_maps[col]).fillna(0.0)
         for col in columns

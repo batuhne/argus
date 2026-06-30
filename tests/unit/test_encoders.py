@@ -16,7 +16,7 @@ from fraud.transforms.features import LABEL_COLUMN
 def test_encoded_feature_names_match_transform_output_order() -> None:
     frame = pd.DataFrame({"x": ["a", "b"], "y": ["c", "d"], LABEL_COLUMN: [0, 1]})
 
-    out = fit_encoder(frame, ["x", "y"], LABEL_COLUMN).transform(frame)
+    out = fit_encoder(frame, ["x", "y"], LABEL_COLUMN, smoothing=20.0).transform(frame)
 
     assert encoded_feature_names(["x", "y"]) == tuple(out.columns)
 
@@ -24,7 +24,7 @@ def test_encoded_feature_names_match_transform_output_order() -> None:
 def test_transform_outputs_named_float32_columns() -> None:
     frame = pd.DataFrame({"cat": ["a", "b"], LABEL_COLUMN: [0, 1]})
 
-    out = fit_encoder(frame, ["cat"], LABEL_COLUMN).transform(frame)
+    out = fit_encoder(frame, ["cat"], LABEL_COLUMN, smoothing=20.0).transform(frame)
 
     assert list(out.columns) == ["cat_freq", "cat_target"]
     assert out["cat_freq"].dtype == "float32"
@@ -34,7 +34,7 @@ def test_transform_outputs_named_float32_columns() -> None:
 def test_frequency_encoding_is_category_proportion() -> None:
     frame = pd.DataFrame({"cat": ["a", "a", "b", "c"], LABEL_COLUMN: [0, 1, 0, 1]})
 
-    out = fit_encoder(frame, ["cat"], LABEL_COLUMN).transform(frame)
+    out = fit_encoder(frame, ["cat"], LABEL_COLUMN, smoothing=20.0).transform(frame)
 
     assert out["cat_freq"].iloc[0] == pytest.approx(0.5)  # 'a' is 2 of 4
     assert out["cat_freq"].iloc[2] == pytest.approx(0.25)  # 'b' is 1 of 4
@@ -142,21 +142,21 @@ def test_out_of_fold_rejects_n_splits_above_minority_count() -> None:
     frame = pd.DataFrame({"cat": ["a"] * 6, LABEL_COLUMN: [0, 0, 0, 0, 0, 1]})
 
     with pytest.raises(ValueError, match="n_splits"):
-        fit_transform_oof(frame, ["cat"], LABEL_COLUMN, seed=0, n_splits=5)
+        fit_transform_oof(frame, ["cat"], LABEL_COLUMN, seed=0, smoothing=20.0, n_splits=5)
 
 
 def test_out_of_fold_is_deterministic() -> None:
     frame = _singleton_frame()
 
-    _, first = fit_transform_oof(frame, ["cat"], LABEL_COLUMN, seed=7)
-    _, second = fit_transform_oof(frame, ["cat"], LABEL_COLUMN, seed=7)
+    _, first = fit_transform_oof(frame, ["cat"], LABEL_COLUMN, seed=7, smoothing=20.0, n_splits=5)
+    _, second = fit_transform_oof(frame, ["cat"], LABEL_COLUMN, seed=7, smoothing=20.0, n_splits=5)
 
     pd.testing.assert_frame_equal(first, second)
 
 
 def test_encoder_survives_joblib_round_trip(tmp_path: Path) -> None:
     frame = pd.DataFrame({"cat": ["a", "a", "b", "c"], LABEL_COLUMN: [0, 1, 0, 1]})
-    encoder = fit_encoder(frame, ["cat"], LABEL_COLUMN)
+    encoder = fit_encoder(frame, ["cat"], LABEL_COLUMN, smoothing=20.0)
     path = tmp_path / "encoder.joblib"
 
     save_encoder(encoder, path)

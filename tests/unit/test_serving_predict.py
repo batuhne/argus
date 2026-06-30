@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 from sklearn.isotonic import IsotonicRegression
 
-from fraud.evaluation.calibration import IsotonicCalibrator
+from fraud.calibrator import IsotonicCalibrator
 from fraud.model_loader import ModelBundle
 from fraud.serving.predict import score_transaction
 from fraud.transforms.encoders import CategoricalEncoder

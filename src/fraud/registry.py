@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from mlflow import MlflowClient
+from mlflow.exceptions import MlflowException
 
 CHAMPION_TAG_AUPRC = "test_auprc"
 CHAMPION_TAG_COST_PER_TX = "expected_cost_per_tx_usd"
@@ -24,8 +25,13 @@ def attach_alias(model_name: str, version: int, *, alias: str = "candidate") -> 
 
 
 def get_alias_version(model_name: str, alias: str) -> int | None:
-    """Return the version pointed at by the alias, or None if the alias is unset."""
-    registered = MlflowClient().get_registered_model(model_name)
+    """Return the version pointed at by the alias, or None if the model or alias is unset."""
+    try:
+        registered = MlflowClient().get_registered_model(model_name)
+    except MlflowException as exc:
+        if exc.error_code == "RESOURCE_DOES_NOT_EXIST":
+            return None
+        raise
     aliases: Mapping[str, str] = registered.aliases or {}
     raw = aliases.get(alias)
     return int(raw) if raw is not None else None
@@ -39,7 +45,10 @@ def get_version_tags(model_name: str, version: int) -> dict[str, str]:
 
 def get_version_run_id(model_name: str, version: int) -> str:
     """Return the source run id of a registered model version."""
-    return str(MlflowClient().get_model_version(model_name, str(version)).run_id)
+    run_id = MlflowClient().get_model_version(model_name, str(version)).run_id
+    if not run_id:
+        raise RuntimeError(f"model '{model_name}' version {version} has no source run id")
+    return str(run_id)
 
 
 def write_version_tags(model_name: str, version: int, tags: Mapping[str, str]) -> None:

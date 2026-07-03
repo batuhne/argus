@@ -110,7 +110,8 @@ def _load_bundle(cfg: ChampionLoadConfig) -> ModelBundle:
             f"champion version {version} has no '{CHAMPION_TAG_FAMILY}' tag yet"
         )
 
-    model_uri = f"models:/{cfg.model_name}@{cfg.champion_alias}"
+    # Pin the resolved version so the model matches its version-loaded calibrator and encoder.
+    model_uri = f"models:/{cfg.model_name}/{version}"
     model = _load_model_by_family(family, model_uri)
     calibrator = _load_calibrator(cfg.model_name, version)
     encoder = _load_encoder(cfg.model_name, version)
@@ -123,7 +124,17 @@ def _required_threshold(tags: dict[str, str], version: int) -> float:
         raise ChampionUnavailableError(
             f"champion version {version} has no '{CHAMPION_TAG_THRESHOLD}' tag yet"
         )
-    return float(raw)
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise ChampionUnavailableError(
+            f"champion version {version} has a non-numeric '{CHAMPION_TAG_THRESHOLD}' tag {raw!r}"
+        ) from exc
+    if not 0.0 <= value <= 1.0:
+        raise ChampionUnavailableError(
+            f"champion version {version} has an out-of-range decision_threshold {value}"
+        )
+    return value
 
 
 def _load_model_by_family(family: str, model_uri: str) -> Any:

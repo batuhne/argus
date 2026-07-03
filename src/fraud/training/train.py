@@ -560,22 +560,17 @@ def _load_champion_metrics(cfg: TrainingConfig) -> GateMetrics | None:
         return None
     tags = get_version_tags(cfg.model_name, champion_version)
     if CHAMPION_TAG_AUPRC not in tags or CHAMPION_TAG_COST_PER_TX not in tags:
-        log.warning(
-            "champion_tags_missing",
-            champion_version=champion_version,
-            present=sorted(tags.keys()),
+        raise RuntimeError(
+            f"champion version {champion_version} is missing gate tags {sorted(tags.keys())}; "
+            "refusing to treat a corrupt champion as an open bootstrap"
         )
-        return None
     auprc_value = _safe_float(tags[CHAMPION_TAG_AUPRC])
     cost_value = _safe_float(tags[CHAMPION_TAG_COST_PER_TX])
     if auprc_value is None or cost_value is None:
-        log.warning(
-            "champion_tags_invalid",
-            champion_version=champion_version,
-            auprc=tags[CHAMPION_TAG_AUPRC],
-            cost=tags[CHAMPION_TAG_COST_PER_TX],
+        raise RuntimeError(
+            f"champion version {champion_version} has non-finite gate tags "
+            f"(auprc={tags[CHAMPION_TAG_AUPRC]!r}, cost={tags[CHAMPION_TAG_COST_PER_TX]!r})"
         )
-        return None
     return GateMetrics(auprc=auprc_value, expected_cost_per_tx=cost_value)
 
 
@@ -595,7 +590,7 @@ def _promote_champion(
     threshold: float,
     family: str,
 ) -> None:
-    attach_alias(cfg.model_name, version, alias=cfg.champion_alias)
+    # Tags first, alias last: a partial tag write then leaves the old champion whole and servable.
     write_version_tags(
         cfg.model_name,
         version,
@@ -606,6 +601,7 @@ def _promote_champion(
             CHAMPION_TAG_FAMILY: family,
         },
     )
+    attach_alias(cfg.model_name, version, alias=cfg.champion_alias)
 
 
 def main() -> None:

@@ -14,8 +14,10 @@ from fraud.model_loader import (
     ChampionUnavailableError,
     _backoff_delay,
     _load_model_by_family,
+    _required_threshold,
     load_champion,
 )
+from fraud.registry import CHAMPION_TAG_THRESHOLD
 from fraud.serving.config import ServingConfig
 
 
@@ -98,3 +100,24 @@ def test_load_champion_does_not_retry_misconfiguration(monkeypatch: pytest.Monke
 def test_backoff_delay_increases_and_is_capped() -> None:
     assert _RETRY_BASE_SECONDS <= _backoff_delay(0) <= 2 * _RETRY_BASE_SECONDS
     assert _RETRY_CAP_SECONDS <= _backoff_delay(20) <= _RETRY_CAP_SECONDS + _RETRY_BASE_SECONDS
+
+
+def test_required_threshold_returns_a_valid_value() -> None:
+    assert _required_threshold({CHAMPION_TAG_THRESHOLD: "0.5"}, 1) == 0.5
+
+
+def test_required_threshold_rejects_a_missing_tag() -> None:
+    with pytest.raises(ChampionUnavailableError, match="decision_threshold"):
+        _required_threshold({}, 1)
+
+
+@pytest.mark.parametrize("raw", ["", "tbd", "0.5x"])
+def test_required_threshold_rejects_a_non_numeric_tag(raw: str) -> None:
+    with pytest.raises(ChampionUnavailableError, match="non-numeric"):
+        _required_threshold({CHAMPION_TAG_THRESHOLD: raw}, 1)
+
+
+@pytest.mark.parametrize("raw", ["-0.1", "1.5", "nan", "inf"])
+def test_required_threshold_rejects_out_of_range_or_non_finite(raw: str) -> None:
+    with pytest.raises(ChampionUnavailableError, match="out-of-range"):
+        _required_threshold({CHAMPION_TAG_THRESHOLD: raw}, 1)

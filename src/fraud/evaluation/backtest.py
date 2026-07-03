@@ -15,13 +15,12 @@ import mlflow
 import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
-from sklearn.metrics import brier_score_loss
 
 from fraud.common.logging import configure_logging, get_logger
 from fraud.config import get_settings
 from fraud.dataset import build_eval_frame
 from fraud.evaluation.business import CostMatrix, expected_cost
-from fraud.evaluation.calibration import reliability_curve_figure
+from fraud.evaluation.calibration import brier_score, reliability_curve_figure
 from fraud.evaluation.metrics import (
     auprc,
     classification_at_threshold,
@@ -101,7 +100,7 @@ def evaluate_holdout(
         precision=classification["precision"],
         recall=classification["recall"],
         flagged_rate=classification["flagged_rate"],
-        brier=float(brier_score_loss(y_true, y_score, pos_label=1)),
+        brier=brier_score(y_true, y_score),
     )
 
 
@@ -212,7 +211,9 @@ def _write_marker(artifacts_dir: Path, report: BacktestReport, bundle: ModelBund
         },
         "brier": report.brier,
     }
-    (artifacts_dir / "backtest.json").write_text(json.dumps(payload, indent=2))
+    tmp = artifacts_dir / "backtest.json.tmp"
+    tmp.write_text(json.dumps(payload, indent=2))
+    tmp.replace(artifacts_dir / "backtest.json")
 
 
 def main() -> None:

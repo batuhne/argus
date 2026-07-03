@@ -38,6 +38,8 @@ MAX_PREDICT_RETRIES = 5
 BACKOFF_BASE_SECONDS = 0.5
 BACKOFF_MAX_SECONDS = 8.0
 BACKOFF_JITTER_SECONDS = 0.3
+SUCCESS_START = 200
+REDIRECT_START = 300
 CLIENT_ERROR_START = 400
 SERVER_ERROR_START = 500
 TOO_MANY_REQUESTS = 429
@@ -94,6 +96,8 @@ def run_consumer(
     breaker = _CircuitBreaker(CIRCUIT_BREAKER_THRESHOLD, CIRCUIT_COOLDOWN_SECONDS)
     consumer.subscribe([cfg.transactions_topic])
     log.info("consumer_start", topic=cfg.transactions_topic, predict_url=cfg.predict_url)
+    if cfg.predict_api_key is None:
+        log.warning("predict_api_key_unset", predict_url=cfg.predict_url)
 
     try:
         while not shutdown.requested:
@@ -143,19 +147,20 @@ def _handle_message(
     payload = message.value()
     if payload is None:
         log.warning("empty_payload_routed_to_dlq")
-        return _commit_to_dlq(message, cfg, producer, consumer, breaker, reason="empty_payload")
+        return _commit_to_dlq(message, cfg, producer, consumer, reason="empty_payload")
     try:
         event = deserialize_transaction(payload)
     except ValidationError as exc:
         log.warning("poison_message_routed_to_dlq", error=str(exc))
-        return _commit_to_dlq(message, cfg, producer, consumer, breaker, reason="deserialize_error")
+        return _commit_to_dlq(message, cfg, producer, consumer, reason="deserialize_error")
 
     result = _fetch_prediction(cfg, session, event, shutdown, max_attempts=_probe_or_full(breaker))
     if result.outcome is FetchOutcome.OK and result.prediction is not None:
-        return _commit_prediction(message, cfg, producer, consumer, breaker, result.prediction)
+        _note_recovery(breaker)
+        return _commit_prediction(message, cfg, producer, consumer, result.prediction)
     if result.outcome is FetchOutcome.REJECTED:
         log.warning("prediction_rejected_to_dlq", transaction_id=event.transaction_id)
-        return _commit_to_dlq(message, cfg, producer, consumer, breaker, reason="rejected")
+        return _commit_to_dlq(message, cfg, producer, consumer, reason="rejected")
     if result.outcome is FetchOutcome.UNAVAILABLE:
         breaker.record_failure()
     return False
@@ -166,14 +171,13 @@ def _commit_prediction(
     cfg: StreamConfig,
     producer: Producer,
     consumer: Consumer,
-    breaker: _CircuitBreaker,
     prediction: PredictionEvent,
 ) -> bool:
+    # A Kafka publish fault holds for redelivery but must not trip the serving breaker.
     if not _publish_prediction(producer, cfg, prediction):
-        breaker.record_failure()
         return False
-    _note_recovery(breaker)
-    consumer.commit(message=message, asynchronous=False)
+    if not _commit_offset(consumer, message):
+        return False
     log.info(
         "prediction_consumed",
         transaction_id=prediction.transaction_id,
@@ -188,15 +192,21 @@ def _commit_to_dlq(
     cfg: StreamConfig,
     producer: Producer,
     consumer: Consumer,
-    breaker: _CircuitBreaker,
     *,
     reason: str,
 ) -> bool:
     if not _to_dlq(producer, cfg, message, reason=reason):
-        breaker.record_failure()
         return False
-    _note_recovery(breaker)
-    consumer.commit(message=message, asynchronous=False)
+    return _commit_offset(consumer, message)
+
+
+def _commit_offset(consumer: Consumer, message: Message) -> bool:
+    # A rebalance can revoke the partition between poll and commit; redeliver instead of crashing.
+    try:
+        consumer.commit(message=message, asynchronous=False)
+    except KafkaException as exc:
+        log.warning("commit_failed", error=str(exc))
+        return False
     return True
 
 
@@ -232,9 +242,9 @@ def _fetch_prediction(
             )
         except requests.RequestException as exc:
             log.warning("predict_call_failed", attempt=attempt, error=str(exc))
-            _backoff(attempt)
+            _backoff(attempt, shutdown)
             continue
-        if response.status_code < CLIENT_ERROR_START:
+        if _is_success(response.status_code):
             prediction = prediction_from_response(event, response)
             if prediction is None:
                 return PredictionResult(FetchOutcome.UNAVAILABLE)
@@ -247,7 +257,7 @@ def _fetch_prediction(
             return PredictionResult(FetchOutcome.UNAVAILABLE)
         if _is_retryable_status(response.status_code):
             log.warning("predict_unavailable", status=response.status_code, attempt=attempt)
-            _backoff(attempt)
+            _backoff(attempt, shutdown)
             continue
         if response.status_code in (UNAUTHORIZED, FORBIDDEN):
             # An auth failure is our own misconfiguration, not a poison payload; hold the message
@@ -261,6 +271,10 @@ def _fetch_prediction(
 
     log.error("predict_retries_exhausted", transaction_id=event.transaction_id)
     return PredictionResult(FetchOutcome.UNAVAILABLE)
+
+
+def _is_success(status_code: int) -> bool:
+    return SUCCESS_START <= status_code < REDIRECT_START
 
 
 def _is_retryable_status(status_code: int) -> bool:
@@ -376,8 +390,14 @@ def _produce_confirmed(
             delivered = False
             log.warning("delivery_failed", topic=topic, error=str(error))
 
-    producer.produce(topic, key=key, value=value, headers=headers, on_delivery=_on_delivery)
+    try:
+        producer.produce(topic, key=key, value=value, headers=headers, on_delivery=_on_delivery)
+    except BufferError as exc:
+        log.warning("produce_queue_full", topic=topic, error=str(exc))
+        return False
     pending = producer.flush(FLUSH_TIMEOUT_SECONDS)
+    if pending:
+        log.warning("produce_flush_timeout", topic=topic, pending=pending)
     return pending == 0 and delivered
 
 
@@ -393,9 +413,9 @@ def _seek_back(consumer: Consumer, message: Message) -> None:
         log.warning("seek_back_failed", error=str(exc))
 
 
-def _backoff(attempt: int) -> None:
+def _backoff(attempt: int, shutdown: ShutdownFlag) -> None:
     delay = min(BACKOFF_BASE_SECONDS * (2 ** (attempt - 1)), BACKOFF_MAX_SECONDS)
-    time.sleep(delay + random.uniform(0.0, BACKOFF_JITTER_SECONDS))
+    _interruptible_sleep(delay + random.uniform(0.0, BACKOFF_JITTER_SECONDS), shutdown)
 
 
 def _interruptible_sleep(seconds: float, shutdown: ShutdownFlag) -> None:

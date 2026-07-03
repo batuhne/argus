@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import pytest
@@ -48,15 +49,21 @@ class _FakeProducer:
     def __init__(self) -> None:
         self.produced: list[tuple[str, bytes, bytes]] = []
         self.flushed = False
+        self._callbacks: list[Any] = []
 
-    def produce(self, topic: str, key: bytes, value: bytes) -> None:
+    def produce(self, topic: str, key: bytes, value: bytes, on_delivery: Any = None) -> None:
         self.produced.append((topic, key, value))
+        if on_delivery is not None:
+            self._callbacks.append(on_delivery)
 
     def poll(self, _timeout: float) -> int:
         return 0
 
     def flush(self, *_args: object) -> int:
         self.flushed = True
+        for callback in self._callbacks:
+            callback(None, None)
+        self._callbacks.clear()
         return 0
 
 
@@ -113,6 +120,30 @@ def test_run_publishes_every_label_keyed_by_transaction(tmp_path: Path) -> None:
     _, first_key, first_value = producer.produced[0]
     assert first_key == b"101"
     assert deserialize_label(first_value).is_fraud == 0
+
+
+def test_failed_delivery_is_not_counted(tmp_path: Path) -> None:
+    source = tmp_path / "holdout.parquet"
+    _frame().to_parquet(source)
+
+    class _FailingProducer(_FakeProducer):
+        def flush(self, *_args: object) -> int:
+            self.flushed = True
+            for callback in self._callbacks:
+                callback("broker down", None)
+            self._callbacks.clear()
+            return 0
+
+    published = run_label_simulator(
+        _cfg(),
+        source,
+        stream_params=_instant_params(),
+        seed=0,
+        producer=_FailingProducer(),  # type: ignore[arg-type]
+        shutdown=ShutdownFlag(),
+    )
+
+    assert published == 0  # a delivery error must not count toward the delivered total
 
 
 def test_shutdown_before_start_publishes_nothing(tmp_path: Path) -> None:

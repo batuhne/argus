@@ -26,6 +26,8 @@ from fraud.transforms import feature_logic as fl
 
 log = get_logger(__name__)
 
+FLUSH_TIMEOUT_SECONDS = 10.0
+
 _SOURCE_COLUMNS = [
     "TransactionID",
     "TransactionDT",
@@ -48,20 +50,29 @@ def run_producer(cfg: StreamConfig, source_path: Path, *, stream_params: StreamP
     )
     shutdown = install_shutdown_handler()
 
-    published = 0
+    delivered = 0
+
+    def _on_delivery(error: object, _message: object) -> None:
+        nonlocal delivered
+        if error is not None:
+            log.warning("delivery_failed", error=str(error))
+            return
+        delivered += 1
+
     try:
         for delay, event in zip(delays, _iter_events(frame), strict=True):
             if shutdown.requested:
                 break
             if delay > 0.0:
                 time.sleep(float(delay))
-            _publish(producer, cfg.transactions_topic, event)
+            _publish(producer, cfg.transactions_topic, event, _on_delivery)
             producer.poll(0)
-            published += 1
     finally:
-        producer.flush()
-    log.info("replay_complete", published=published, topic=cfg.transactions_topic)
-    return published
+        pending = producer.flush(FLUSH_TIMEOUT_SECONDS)
+        if pending:
+            log.warning("producer_flush_timeout", pending=pending)
+    log.info("replay_complete", delivered=delivered, topic=cfg.transactions_topic)
+    return delivered
 
 
 def _load_transactions(source_path: Path) -> pd.DataFrame:
@@ -113,18 +124,13 @@ def _optional_str(value: Any) -> str | None:
     return None if pd.isna(value) else str(value)
 
 
-def _publish(producer: Producer, topic: str, event: TransactionEvent) -> None:
+def _publish(producer: Producer, topic: str, event: TransactionEvent, on_delivery: Any) -> None:
     producer.produce(
         topic,
         key=event.card_id.encode("utf-8"),
         value=serialize(event),
-        on_delivery=_on_delivery,
+        on_delivery=on_delivery,
     )
-
-
-def _on_delivery(error: object, _message: object) -> None:
-    if error is not None:
-        log.warning("delivery_failed", error=str(error))
 
 
 def main() -> None:

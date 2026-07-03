@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -24,6 +25,7 @@ from fraud.transforms.features import LABEL_COLUMN
 
 log = get_logger(__name__)
 
+FLUSH_TIMEOUT_SECONDS = 10.0
 _SOURCE_COLUMNS = ["TransactionID", LABEL_COLUMN, "TransactionDT"]
 _SLEEP_GRANULARITY_SECONDS = 0.25
 
@@ -43,21 +45,30 @@ def run_label_simulator(
     shutdown = shutdown or install_shutdown_handler()
     schedule = _label_schedule(frame, stream_params, seed)
 
+    delivered = 0
+
+    def _on_delivery(error: object, _message: object) -> None:
+        nonlocal delivered
+        if error is not None:
+            log.warning("delivery_failed", error=str(error))
+            return
+        delivered += 1
+
     start = time.monotonic()
-    published = 0
     try:
         for emit_offset, event in schedule:
             # The sleep returns early on shutdown, so a single post-wait check stops promptly.
             _sleep_interruptible(start + emit_offset - time.monotonic(), shutdown)
             if shutdown.requested:
                 break
-            _publish(producer, LABELS_TOPIC, event)
+            _publish(producer, LABELS_TOPIC, event, _on_delivery)
             producer.poll(0)
-            published += 1
     finally:
-        producer.flush()
-    log.info("labels_complete", published=published, topic=LABELS_TOPIC)
-    return published
+        pending = producer.flush(FLUSH_TIMEOUT_SECONDS)
+        if pending:
+            log.warning("label_flush_timeout", pending=pending)
+    log.info("labels_complete", delivered=delivered, topic=LABELS_TOPIC)
+    return delivered
 
 
 def _load_labels(source_path: Path) -> pd.DataFrame:
@@ -90,11 +101,12 @@ def _label_schedule(
     return sorted(zip(emit_offset.tolist(), events, strict=True), key=lambda item: item[0])
 
 
-def _publish(producer: Producer, topic: str, event: LabelEvent) -> None:
+def _publish(producer: Producer, topic: str, event: LabelEvent, on_delivery: Any) -> None:
     producer.produce(
         topic,
         key=event.transaction_id.encode("utf-8"),
         value=serialize(event),
+        on_delivery=on_delivery,
     )
 
 
@@ -118,7 +130,6 @@ def main() -> None:
         warp=stream_params.time_warp_factor,
         topic=LABELS_TOPIC,
     )
-    # Trail labels for the holdout the producer replays.
     run_label_simulator(
         cfg, PROCESSED_DIR / "holdout.parquet", stream_params=stream_params, seed=settings.seed
     )

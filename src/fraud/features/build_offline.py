@@ -21,7 +21,9 @@ def build_offline_features(
     features = fl.compute_card_velocity(keyed)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    features.to_parquet(output_path, index=False)
+    tmp = output_path.with_name(output_path.name + ".tmp")
+    features.to_parquet(tmp, index=False)
+    tmp.replace(output_path)
 
 
 if __name__ == "__main__":

@@ -199,6 +199,9 @@ class _LoopConsumer:
 @pytest.fixture(autouse=True)
 def _no_backoff_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("fraud.ingestion.consumer.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        "fraud.ingestion.consumer._interruptible_sleep", lambda _seconds, _shutdown: None
+    )
 
 
 def test_predict_request_body_wraps_in_request_key() -> None:
@@ -452,13 +455,47 @@ def test_seek_back_rewinds_to_message_offset() -> None:
 
 
 def test_handle_message_holds_offset_when_publish_unconfirmed() -> None:
+    # Serving answered; only the Kafka publish failed, so hold the offset but leave the breaker.
     producer, consumer = _FakeProducer(deliver=False), _FakeConsumer()
     session = _FakeSession([_FakeResponse(200, _PREDICT_BODY)])
     breaker = _breaker()
     committed = _handle(_FakeMessage(_payload()), session, producer, consumer, breaker)
     assert committed is False
     assert consumer.commits == 0
-    assert breaker.failures == 1
+    assert breaker.failures == 0
+
+
+def test_dlq_write_does_not_reset_serving_breaker() -> None:
+    # Dead-lettering a poison message during a serving outage must leave the breaker armed.
+    producer, consumer = _FakeProducer(), _FakeConsumer()
+    breaker = _breaker()
+    breaker.record_failure()
+    breaker.record_failure()
+    _handle(_FakeMessage(b"not-json"), _FakeSession([]), producer, consumer, breaker)
+    assert breaker.failures == 2
+
+
+def test_handle_message_holds_offset_on_producer_buffer_error() -> None:
+    # A full librdkafka queue must hold the offset, not crash the loop or arm the serving breaker.
+    class _BufferFullProducer(_FakeProducer):
+        def produce(self, *args: Any, **kwargs: Any) -> None:
+            raise BufferError("queue full")
+
+    consumer = _FakeConsumer()
+    session = _FakeSession([_FakeResponse(200, _PREDICT_BODY)])
+    breaker = _breaker()
+    committed = _handle(_FakeMessage(_payload()), session, _BufferFullProducer(), consumer, breaker)
+    assert committed is False
+    assert consumer.commits == 0
+    assert breaker.failures == 0
+
+
+def test_fetch_prediction_rejects_non_2xx_status() -> None:
+    # Only a 2xx carries a prediction; a 3xx from a misrouted endpoint is a permanent reject.
+    session = _FakeSession([_FakeResponse(301)])
+    result = _fetch_prediction(_cfg(), session, _event(), ShutdownFlag())  # type: ignore[arg-type]
+    assert result.outcome is FetchOutcome.REJECTED
+    assert session.calls == 1
 
 
 def test_handle_message_routes_empty_payload_to_dlq() -> None:

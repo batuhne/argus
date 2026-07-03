@@ -17,6 +17,8 @@ from fraud.paths import CARD_FEATURES_PATH, FEATURE_REPO_DIR
 
 def _materialization_window(features_path: Path) -> tuple[pd.Timestamp, pd.Timestamp]:
     timestamps = pd.read_parquet(features_path, columns=["event_timestamp"])["event_timestamp"]
+    if timestamps.empty or timestamps.isna().all():
+        raise ValueError(f"no event_timestamp rows in {features_path}; run build_offline first")
     # Nudge past the last event so it is included.
     return timestamps.min(), timestamps.max() + timedelta(seconds=1)
 

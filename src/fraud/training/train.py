@@ -17,6 +17,7 @@ import mlflow.xgboost
 import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
+from sklearn.model_selection import train_test_split
 
 from fraud.common.lineage import collect_lineage
 from fraud.common.logging import configure_logging, get_logger
@@ -26,6 +27,7 @@ from fraud.dataset import add_encoded_categoricals, load_splits
 from fraud.evaluation.business import CostMatrix, expected_cost
 from fraud.evaluation.calibration import (
     CalibrationResult,
+    brier_score,
     fit_isotonic,
     reliability_curve_figure,
 )
@@ -70,6 +72,8 @@ from fraud.transforms.features import build_xy
 
 Splits = dict[str, tuple[pd.DataFrame, pd.Series]]
 BASELINE_SAMPLE_SIZE = 50000
+# Fraction of val held out for threshold selection; the rest fits the calibrator.
+_THRESHOLD_SELECTION_FRACTION = 0.5
 log = get_logger(__name__)
 _CALIBRATORS = {"isotonic": fit_isotonic}
 
@@ -442,6 +446,8 @@ def _model_flavor(family: str) -> Any:
         "lightgbm": mlflow.lightgbm,
         "catboost": mlflow.catboost,
     }
+    if family not in flavors:
+        raise RuntimeError(f"unsupported model family {family!r}")
     return flavors[family]
 
 
@@ -453,14 +459,15 @@ def _evaluate_and_gate(
     raw_val = primary.model.predict_proba(x_val)[:, 1]
     raw_test = primary.model.predict_proba(x_test)[:, 1]
 
-    calibration = _CALIBRATORS[cfg.calibration_method](y_val, raw_val)
-    calibrated_val = calibration.calibrator.predict(raw_val)
+    fit_idx, select_idx = _split_val_for_calibration(y_val, cfg.seed)
+    calibration = _CALIBRATORS[cfg.calibration_method](y_val.iloc[fit_idx], raw_val[fit_idx])
+    calibrated_select = calibration.calibrator.predict(raw_val[select_idx])
     calibrated_test = calibration.calibrator.predict(raw_test)
-    _log_calibration(calibration, y_test, calibrated_test)
+    _log_calibration(calibration, y_test, raw_test, calibrated_test)
 
     threshold = select_threshold(
-        y_val,
-        calibrated_val,
+        y_val.iloc[select_idx],
+        calibrated_select,
         matrix=cfg.cost_matrix,
         constraints=cfg.threshold_constraints,
     )
@@ -496,21 +503,36 @@ def _evaluate_and_gate(
     )
 
 
+def _split_val_for_calibration(
+    y_val: pd.Series, seed: int
+) -> tuple[NDArray[np.intp], NDArray[np.intp]]:
+    """Split val so the threshold is not chosen on the calibrator's own fit data."""
+    positions = np.arange(len(y_val))
+    fit_idx, select_idx = train_test_split(
+        positions,
+        test_size=_THRESHOLD_SELECTION_FRACTION,
+        random_state=seed,
+        stratify=y_val.to_numpy(),
+    )
+    return fit_idx, select_idx
+
+
 def _log_calibration(
-    result: CalibrationResult, y_test: pd.Series, calibrated_test: NDArray[np.float64]
+    result: CalibrationResult,
+    y_test: pd.Series,
+    raw_test: NDArray[np.float64],
+    calibrated_test: NDArray[np.float64],
 ) -> None:
-    mlflow.log_metric("calibrated_val_brier_before", result.brier_before)
-    mlflow.log_metric("calibrated_val_brier_after", result.brier_after)
+    brier_before = brier_score(y_test, raw_test)
+    brier_after = brier_score(y_test, calibrated_test)
+    mlflow.log_metric("calibrated_test_brier_before", brier_before)
+    mlflow.log_metric("calibrated_test_brier_after", brier_after)
     reliability = reliability_curve_figure(
         y_test, calibrated_test, title="Test reliability (calibrated)"
     )
     mlflow.log_figure(reliability, "reliability_test.png")
     _log_calibrator_artifact(result)
-    log.info(
-        "calibration_fitted",
-        brier_before=result.brier_before,
-        brier_after=result.brier_after,
-    )
+    log.info("calibration_fitted", brier_before=brier_before, brier_after=brier_after)
 
 
 def _log_calibrator_artifact(result: CalibrationResult) -> None:

@@ -80,6 +80,18 @@ def test_missing_is_its_own_learned_category() -> None:
     assert out["cat_freq"].iloc[0] == pytest.approx(0.25)
 
 
+def test_literal_missing_text_does_not_collide_with_a_null() -> None:
+    # A real category whose text matches the marker must stay distinct from an actual null.
+    frame = pd.DataFrame(
+        {"cat": ["__missing__", "__missing__", None, None], LABEL_COLUMN: [1, 1, 0, 0]}
+    )
+    encoder = fit_encoder(frame, ["cat"], LABEL_COLUMN, smoothing=0.0)
+
+    out = encoder.transform(frame)
+
+    assert out["cat_target"].iloc[0] != out["cat_target"].iloc[2]
+
+
 def _singleton_frame() -> pd.DataFrame:
     # A balanced frame where one fraud row carries a category seen nowhere else.
     cats = ["common"] * 40

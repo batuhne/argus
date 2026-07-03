@@ -19,7 +19,12 @@ from fraud.registry import (
     get_alias_version,
     get_version_tags,
 )
-from fraud.training.train import TrainingConfig, _write_run_marker, train_with_splits
+from fraud.training.train import (
+    TrainingConfig,
+    _split_val_for_calibration,
+    _write_run_marker,
+    train_with_splits,
+)
 from fraud.transforms.encoders import CategoricalEncoder
 
 pytestmark = pytest.mark.integration
@@ -66,6 +71,15 @@ def _make_splits(
         "val": factory(200, 2),
         "test": factory(200, 3),
     }
+
+
+def test_split_val_for_calibration_is_disjoint_and_covers_val() -> None:
+    y = pd.Series([0, 1] * 50)
+
+    fit_idx, select_idx = _split_val_for_calibration(y, seed=42)
+
+    assert set(fit_idx).isdisjoint(select_idx)
+    assert sorted([*fit_idx.tolist(), *select_idx.tolist()]) == list(range(100))
 
 
 def test_train_with_splits_bootstraps_champion_on_first_run(

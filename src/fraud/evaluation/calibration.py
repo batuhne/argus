@@ -5,13 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-import numpy as np
-from numpy.typing import ArrayLike, NDArray
+from numpy.typing import ArrayLike
 from sklearn.calibration import calibration_curve
 from sklearn.isotonic import IsotonicRegression
 from sklearn.metrics import brier_score_loss
 
 from fraud.calibrator import IsotonicCalibrator
+from fraud.evaluation._coercion import coerce_pair, has_both_classes
 
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
@@ -20,25 +20,23 @@ if TYPE_CHECKING:
 @dataclass(frozen=True, slots=True)
 class CalibrationResult:
     calibrator: IsotonicCalibrator
-    brier_before: float
-    brier_after: float
 
 
 def fit_isotonic(y_val: ArrayLike, raw_scores: ArrayLike) -> CalibrationResult:
-    """Fit isotonic regression on validation scores; report Brier before and after."""
-    y_arr = np.asarray(y_val).astype(np.int8, copy=False)
-    score_arr = np.asarray(raw_scores, dtype=np.float64)
-    _require_aligned(y_arr, score_arr)
-    if not _has_both_classes(y_arr):
+    """Fit isotonic regression on validation scores and return the calibrator."""
+    y_arr, score_arr = coerce_pair(y_val, raw_scores)
+    if not has_both_classes(y_arr):
         raise ValueError("cannot fit isotonic calibration on a single-class validation set")
 
     regressor = IsotonicRegression(out_of_bounds="clip", y_min=0.0, y_max=1.0)
     regressor.fit(score_arr, y_arr)
-    calibrator = IsotonicCalibrator(regressor=regressor)
+    return CalibrationResult(IsotonicCalibrator(regressor=regressor))
 
-    brier_before = float(brier_score_loss(y_arr, score_arr))
-    brier_after = float(brier_score_loss(y_arr, calibrator.predict(score_arr)))
-    return CalibrationResult(calibrator, brier_before, brier_after)
+
+def brier_score(y_true: ArrayLike, y_score: ArrayLike) -> float:
+    """Brier score; evaluate on held-out data since isotonic interpolates its own fit data."""
+    y_arr, score_arr = coerce_pair(y_true, y_score, require_finite=True)
+    return float(brier_score_loss(y_arr, score_arr))
 
 
 def reliability_curve_figure(
@@ -51,13 +49,11 @@ def reliability_curve_figure(
     """Diagonal-anchored reliability curve for the calibrated test scores."""
     from matplotlib.figure import Figure
 
-    y_arr = np.asarray(y_true).astype(np.int8, copy=False)
-    score_arr = np.asarray(y_score, dtype=np.float64)
-    _require_aligned(y_arr, score_arr)
+    y_arr, score_arr = coerce_pair(y_true, y_score)
 
     figure = Figure(figsize=(6, 5))
     axes = figure.subplots()
-    if _has_both_classes(y_arr):
+    if has_both_classes(y_arr):
         fraction_positive, mean_predicted = calibration_curve(y_arr, score_arr, n_bins=n_bins)
         axes.plot([0.0, 1.0], [0.0, 1.0], linestyle="--", linewidth=1, label="perfect")
         axes.plot(mean_predicted, fraction_positive, marker="o", linewidth=1.5, label="model")
@@ -71,13 +67,3 @@ def reliability_curve_figure(
     axes.set_title(title)
     figure.tight_layout()
     return figure
-
-
-def _require_aligned(y_true: NDArray[np.int8], y_score: NDArray[np.float64]) -> None:
-    if y_true.shape != y_score.shape:
-        raise ValueError(f"y_true and y_score must align: got {y_true.shape} vs {y_score.shape}")
-
-
-def _has_both_classes(y_true: NDArray[np.int8]) -> bool:
-    total = int(y_true.sum())
-    return 0 < total < len(y_true)

@@ -11,8 +11,8 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import StratifiedKFold
 
-# A missing categorical is encoded as its own category: in IEEE-CIS the absence is itself signal.
-MISSING = "__missing__"
+# Missing is its own category (absence is signal); the null byte can't collide with a real value.
+MISSING = "\x00__missing__"
 FREQ_SUFFIX = "_freq"
 TARGET_SUFFIX = "_target"
 

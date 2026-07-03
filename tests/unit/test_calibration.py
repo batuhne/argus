@@ -5,17 +5,22 @@ import numpy as np
 import pytest
 
 from fraud.calibrator import IsotonicCalibrator
-from fraud.evaluation.calibration import fit_isotonic, reliability_curve_figure
+from fraud.evaluation.calibration import brier_score, fit_isotonic, reliability_curve_figure
 
 
-def test_fit_isotonic_lowers_brier_on_fit_data() -> None:
+def test_calibration_lowers_brier_versus_raw_scores() -> None:
     rng = np.random.default_rng(0)
     y = rng.integers(0, 2, size=2000)
     overconfident = np.clip(y * 0.95 + rng.normal(scale=0.1, size=2000), 0.0, 1.0)
 
-    result = fit_isotonic(y, overconfident)
+    calibrator = fit_isotonic(y, overconfident).calibrator
 
-    assert result.brier_after <= result.brier_before
+    assert brier_score(y, calibrator.predict(overconfident)) <= brier_score(y, overconfident)
+
+
+def test_brier_score_rejects_non_finite_scores() -> None:
+    with pytest.raises(ValueError, match="finite"):
+        brier_score([0, 1], [0.5, np.nan])
 
 
 def test_isotonic_predict_clamps_out_of_range_input() -> None:

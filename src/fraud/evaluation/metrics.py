@@ -6,21 +6,19 @@ import math
 from typing import TYPE_CHECKING
 
 import numpy as np
-from numpy.typing import ArrayLike, NDArray
+from numpy.typing import ArrayLike
 from sklearn.metrics import average_precision_score, precision_recall_curve
 
-from fraud.evaluation._coercion import coerce_pair
+from fraud.evaluation._coercion import coerce_pair, has_both_classes
 
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
-
-IntArray = NDArray[np.int8]
 
 
 def auprc(y_true: ArrayLike, y_score: ArrayLike) -> float:
     """Average precision; returns NaN if y_true is single-class."""
     y_true_arr, y_score_arr = coerce_pair(y_true, y_score)
-    if not _has_both_classes(y_true_arr):
+    if not has_both_classes(y_true_arr):
         return math.nan
     return float(average_precision_score(y_true_arr, y_score_arr))
 
@@ -41,7 +39,7 @@ def recall_at_k(y_true: ArrayLike, y_score: ArrayLike, k: float) -> float:
 def classification_at_threshold(
     y_true: ArrayLike, y_score: ArrayLike, threshold: float
 ) -> dict[str, float]:
-    y_true_arr, y_score_arr = coerce_pair(y_true, y_score)
+    y_true_arr, y_score_arr = coerce_pair(y_true, y_score, require_finite=True)
     flagged = y_score_arr >= threshold
     positives = int(y_true_arr.sum())
     negatives = len(y_true_arr) - positives
@@ -61,7 +59,7 @@ def pr_curve_figure(y_true: ArrayLike, y_score: ArrayLike, title: str = "PR curv
     y_true_arr, y_score_arr = coerce_pair(y_true, y_score)
     figure = Figure(figsize=(6, 5))
     axes = figure.subplots()
-    if _has_both_classes(y_true_arr):
+    if has_both_classes(y_true_arr):
         precision, recall, _ = precision_recall_curve(y_true_arr, y_score_arr)
         axes.plot(recall, precision, linewidth=1.5)
         axes.set_xlim(0.0, 1.0)
@@ -73,11 +71,6 @@ def pr_curve_figure(y_true: ArrayLike, y_score: ArrayLike, title: str = "PR curv
     axes.set_title(title)
     figure.tight_layout()
     return figure
-
-
-def _has_both_classes(y_true: IntArray) -> bool:
-    total = int(y_true.sum())
-    return 0 < total < len(y_true)
 
 
 def _safe_ratio(numerator: int, denominator: int) -> float:

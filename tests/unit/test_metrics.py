@@ -76,6 +76,16 @@ def test_coerce_pair_rejects_mismatched_lengths() -> None:
         auprc([0, 1], [0.1, 0.2, 0.3])
 
 
+def test_coerce_pair_rejects_labels_that_would_overflow_int8() -> None:
+    with pytest.raises(ValueError, match="binary"):
+        auprc([0, 128], [0.1, 0.2])
+
+
+def test_classification_at_threshold_rejects_non_finite_scores() -> None:
+    with pytest.raises(ValueError, match="finite"):
+        classification_at_threshold([0, 1], [0.5, math.nan], threshold=0.5)
+
+
 def test_metrics_accept_pandas_series() -> None:
     y_true = pd.Series([0, 1, 0, 1])
     y_score = pd.Series([0.2, 0.9, 0.3, 0.8])

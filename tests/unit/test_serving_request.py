@@ -37,6 +37,11 @@ def test_request_rejects_empty_card_id() -> None:
         PredictRequest(card_id="", amount=99.5)
 
 
+def test_request_rejects_empty_transaction_id() -> None:
+    with pytest.raises(ValidationError):
+        PredictRequest(card_id="1_2_3_5", amount=99.5, transaction_id="")
+
+
 @pytest.mark.parametrize("amount", [0.0, -1.0])
 def test_request_rejects_non_positive_amount(amount: float) -> None:
     with pytest.raises(ValidationError):

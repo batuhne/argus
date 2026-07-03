@@ -2,7 +2,7 @@
 
 from functools import lru_cache
 
-from pydantic import SecretStr
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     mlflow_request_timeout_seconds: int = 15
     # How long serving keeps retrying the champion load before it gives up and exits.
     model_load_deadline_seconds: float = 60.0
+    # How often serving re-checks the champion alias and hot-swaps a promoted model. 0 disables.
+    champion_reload_interval_seconds: float = 60.0
     # All three broker ports, so a host client still connects when one broker is down.
     kafka_bootstrap_servers: str = "localhost:19092,localhost:29092,localhost:39092"
     serving_predict_url: str = "http://localhost:3001/predict"
@@ -43,6 +45,13 @@ class Settings(BaseSettings):
     redis_port: int = 6379
 
     kaggle_api_token: SecretStr | None = None
+
+    @field_validator("serving_api_key", mode="after")
+    @classmethod
+    def _blank_api_key_is_unset(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is not None and not value.get_secret_value().strip():
+            return None
+        return value
 
 
 @lru_cache

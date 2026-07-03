@@ -13,16 +13,21 @@ def _event() -> ScoredFeaturesEvent:
 
 
 class _FakeProducer:
-    def __init__(self, raise_error: Exception | None = None) -> None:
+    def __init__(
+        self, raise_error: Exception | None = None, delivery_error: object | None = None
+    ) -> None:
         self.produced: list[tuple[str, bytes, bytes]] = []
         self.polls = 0
         self.flushes = 0
         self._raise_error = raise_error
+        self._delivery_error = delivery_error
 
-    def produce(self, topic: str, key: bytes, value: bytes) -> None:
+    def produce(self, topic: str, key: bytes, value: bytes, on_delivery: object = None) -> None:
         if self._raise_error is not None:
             raise self._raise_error
         self.produced.append((topic, key, value))
+        if callable(on_delivery):
+            on_delivery(self._delivery_error, None)
 
     def poll(self, _timeout: float) -> int:
         self.polls += 1
@@ -51,6 +56,20 @@ def test_log_swallows_buffer_error_without_raising() -> None:
     logger = InferenceLogger(producer)  # type: ignore[arg-type]
     logger.log(_event())  # must not raise
     assert producer.produced == []
+
+
+def test_delivery_error_counts_as_dropped() -> None:
+    producer = _FakeProducer(delivery_error="broker rejected")
+    logger = InferenceLogger(producer)  # type: ignore[arg-type]
+    logger.log(_event())
+    assert logger._dropped == 1
+
+
+def test_successful_delivery_does_not_count_as_dropped() -> None:
+    producer = _FakeProducer()
+    logger = InferenceLogger(producer)  # type: ignore[arg-type]
+    logger.log(_event())
+    assert logger._dropped == 0
 
 
 def test_close_flushes() -> None:

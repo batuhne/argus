@@ -1,3 +1,6 @@
+import pytest
+from pydantic import SecretStr
+
 from fraud.config import Settings, get_settings
 
 
@@ -14,6 +17,22 @@ def test_get_settings_is_cached() -> None:
 
 def test_serving_api_key_defaults_to_none() -> None:
     assert Settings.model_fields["serving_api_key"].default is None
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_blank_serving_api_key_coerces_to_none(blank: str) -> None:
+    assert Settings(serving_api_key=SecretStr(blank)).serving_api_key is None
+
+
+def test_blank_serving_api_key_from_env_coerces_to_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SERVING_API_KEY", "")
+    assert Settings().serving_api_key is None
+
+
+def test_serving_api_key_is_kept_when_set() -> None:
+    key = Settings(serving_api_key=SecretStr("secret")).serving_api_key
+    assert key is not None
+    assert key.get_secret_value() == "secret"
 
 
 def test_bootstrap_default_lists_every_broker() -> None:

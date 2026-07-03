@@ -6,16 +6,23 @@ import time
 
 import bentoml
 import pandas as pd
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from fraud.common.logging import configure_logging, get_logger
 from fraud.config import get_settings
-from fraud.model_loader import load_champion
+from fraud.model_loader import ModelBundle, load_champion
+from fraud.registry import get_alias_version
 from fraud.serving.config import ServingConfig
 from fraud.serving.features import OnlineFeatureFetcher, redis_reachable
 from fraud.serving.inference_log import InferenceLogger
 from fraud.serving.predict import score_transaction
-from fraud.serving.security import MAX_REQUEST_BYTES, BodySizeLimitMiddleware, verify_api_key
+from fraud.serving.reload import ChampionReloader
+from fraud.serving.security import (
+    MAX_REQUEST_BYTES,
+    BodySizeLimitMiddleware,
+    RateLimitMiddleware,
+    verify_api_key,
+)
 from fraud.streaming.events import (
     MAX_TRANSACTION_AMOUNT,
     PredictResponse,
@@ -40,8 +47,27 @@ class PredictRequest(BaseModel):
 
     card_id: str = Field(min_length=1, max_length=128)
     amount: float = Field(gt=0.0, le=MAX_TRANSACTION_AMOUNT)
-    transaction_id: str | None = Field(default=None, max_length=128)
+    transaction_id: str | None = Field(default=None, min_length=1, max_length=128)
     raw: RawAttributes = Field(default_factory=RawAttributes)
+
+
+class _Runtime:
+    __slots__ = ("bundle", "fetcher")
+
+    def __init__(self, bundle: ModelBundle, fetcher: OnlineFeatureFetcher) -> None:
+        self.bundle = bundle
+        self.fetcher = fetcher
+
+
+def _resolve_api_key(api_key: SecretStr | None, environment: str) -> str | None:
+    if api_key is not None:
+        return api_key.get_secret_value()
+    if environment != "local":
+        raise RuntimeError(
+            "serving_api_key must be set outside local; refusing to start an open predict API"
+        )
+    log.warning("serving_auth_disabled")
+    return None
 
 
 @bentoml.service(
@@ -56,28 +82,47 @@ class FraudService:
         settings = get_settings()
         configure_logging(settings.log_level, settings.log_json)
         self._cfg = ServingConfig.from_settings()
-        api_key = settings.serving_api_key
-        self._api_key = api_key.get_secret_value() if api_key is not None else None
-        if self._api_key is None:
-            log.warning("serving_auth_disabled")
-        self._bundle = load_champion(self._cfg.champion_load_config)
-        self._fetcher = OnlineFeatureFetcher(self._cfg, self._bundle.encoder)
+        self._api_key = _resolve_api_key(settings.serving_api_key, settings.environment)
+        self._runtime = self._build_runtime(load_champion(self._cfg.champion_load_config))
         self._inference_log = InferenceLogger.from_bootstrap(settings.kafka_bootstrap_servers)
         log.info(
             "model_loaded",
-            version=self._bundle.version,
-            family=self._bundle.family,
-            threshold=self._bundle.threshold,
+            version=self._runtime.bundle.version,
+            family=self._runtime.bundle.family,
+            threshold=self._runtime.bundle.threshold,
         )
+        self._reloader = ChampionReloader(
+            interval_seconds=self._cfg.reload_interval_seconds,
+            current_version=lambda: self._runtime.bundle.version,
+            latest_version=lambda: get_alias_version(
+                self._cfg.model_name, self._cfg.champion_alias
+            ),
+            load=lambda: load_champion(self._cfg.champion_load_config),
+            apply=self._apply_bundle,
+        )
+        self._reloader.start()
+
+    def _build_runtime(self, bundle: ModelBundle) -> _Runtime:
+        return _Runtime(bundle, OnlineFeatureFetcher(self._cfg, bundle.encoder))
+
+    def _apply_bundle(self, bundle: ModelBundle) -> None:
+        self._runtime = self._build_runtime(bundle)
 
     @bentoml.api  # type: ignore[untyped-decorator]
     def predict(self, request: PredictRequest, ctx: bentoml.Context) -> PredictResponse:
         self._authenticate(ctx)
+        runtime = self._runtime
         start = time.perf_counter()
-        features = self._fetcher.fetch(request.card_id, request.amount, request.raw)
-        scored = score_transaction(self._bundle, features)
+        features = runtime.fetcher.fetch(request.card_id, request.amount, request.raw)
+        scored = score_transaction(runtime.bundle, features)
         latency_ms = (time.perf_counter() - start) * MILLISECONDS_PER_SECOND
-        self._log_inference(request.transaction_id, features, scored.fraud_score, scored.decision)
+        self._log_inference(
+            request.transaction_id,
+            runtime.bundle.version,
+            features,
+            scored.fraud_score,
+            scored.decision,
+        )
         log.info(
             "prediction_served",
             transaction_id=request.transaction_id,
@@ -90,7 +135,7 @@ class FraudService:
             fraud_score=scored.fraud_score,
             decision=scored.decision,
             threshold=scored.threshold,
-            model_version=self._bundle.version,
+            model_version=runtime.bundle.version,
             latency_ms=latency_ms,
         )
 
@@ -100,22 +145,35 @@ class FraudService:
         verify_api_key(ctx.request.headers.get("authorization"), self._api_key)
 
     def _log_inference(
-        self, transaction_id: str | None, features: pd.DataFrame, fraud_score: float, decision: bool
+        self,
+        transaction_id: str | None,
+        model_version: int,
+        features: pd.DataFrame,
+        fraud_score: float,
+        decision: bool,
     ) -> None:
         if transaction_id is None:
             return
-        self._inference_log.log(
-            ScoredFeaturesEvent(
-                transaction_id=transaction_id,
-                model_version=self._bundle.version,
-                fraud_score=fraud_score,
-                decision=decision,
-                features={
-                    str(name): None if pd.isna(value) else float(value)
-                    for name, value in features.iloc[0].items()
-                },
+        try:
+            self._inference_log.log(
+                ScoredFeaturesEvent(
+                    transaction_id=transaction_id,
+                    model_version=model_version,
+                    fraud_score=fraud_score,
+                    decision=decision,
+                    features={
+                        str(name): None if pd.isna(value) else float(value)
+                        for name, value in features.iloc[0].items()
+                    },
+                )
             )
-        )
+        except Exception as exc:
+            log.warning("inference_log_failed", error=str(exc))
+
+    @bentoml.on_shutdown  # type: ignore[untyped-decorator]
+    def _shutdown(self) -> None:
+        self._reloader.stop()
+        self._inference_log.close()
 
     def __is_alive__(self) -> bool:
         return True
@@ -127,4 +185,5 @@ class FraudService:
         return ready
 
 
+FraudService.add_asgi_middleware(RateLimitMiddleware)  # type: ignore[attr-defined]
 FraudService.add_asgi_middleware(BodySizeLimitMiddleware, max_bytes=MAX_REQUEST_BYTES)  # type: ignore[attr-defined]

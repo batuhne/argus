@@ -44,13 +44,23 @@ class InferenceLogger:
     def log(self, event: ScoredFeaturesEvent) -> None:
         try:
             self._producer.produce(
-                self._topic, key=event.transaction_id.encode("utf-8"), value=serialize(event)
+                self._topic,
+                key=event.transaction_id.encode("utf-8"),
+                value=serialize(event),
+                on_delivery=self._on_delivery,
             )
             self._producer.poll(0)
         except (BufferError, KafkaException):
-            self._dropped += 1
-            if self._dropped % _DROP_LOG_EVERY == 1:
-                log.warning("inference_log_dropped", dropped=self._dropped)
+            self._note_dropped()
+
+    def _on_delivery(self, error: object, _message: object) -> None:
+        if error is not None:
+            self._note_dropped()
+
+    def _note_dropped(self) -> None:
+        self._dropped += 1
+        if self._dropped % _DROP_LOG_EVERY == 1:
+            log.warning("inference_log_dropped", dropped=self._dropped)
 
     def close(self) -> None:
         self._producer.flush(5.0)

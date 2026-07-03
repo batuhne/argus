@@ -3,15 +3,19 @@ import types
 from typing import Any
 
 import pytest
+from pydantic import SecretStr
 from starlette.datastructures import Headers
 from starlette.types import Message, Receive, Scope, Send
 
 from fraud.serving.security import (
     BodySizeLimitMiddleware,
+    RateLimiter,
+    RateLimitMiddleware,
     Unauthorized,
+    client_identity,
     verify_api_key,
 )
-from fraud.serving.service import FraudService
+from fraud.serving.service import FraudService, _resolve_api_key
 
 
 @pytest.mark.parametrize("authorization", ["Bearer secret", "Bearer  secret  ", "bearer secret"])
@@ -138,3 +142,102 @@ def test_non_http_scope_passes_through_untouched() -> None:
 
     asyncio.run(run())
     assert app.called
+
+
+def test_resolve_api_key_returns_secret_value_when_set() -> None:
+    assert _resolve_api_key(SecretStr("k"), "production") == "k"
+
+
+def test_resolve_api_key_allows_none_in_local() -> None:
+    assert _resolve_api_key(None, "local") is None
+
+
+@pytest.mark.parametrize("environment", ["production", "staging"])
+def test_resolve_api_key_refuses_none_outside_local(environment: str) -> None:
+    with pytest.raises(RuntimeError, match="serving_api_key"):
+        _resolve_api_key(None, environment)
+
+
+def test_rate_limiter_allows_up_to_capacity_then_blocks() -> None:
+    limiter = RateLimiter(capacity=3, refill_per_second=1.0, clock=lambda: 0.0)
+
+    assert [limiter.check("k")[0] for _ in range(3)] == [True, True, True]
+    allowed, retry_after = limiter.check("k")
+
+    assert allowed is False
+    assert retry_after >= 1
+
+
+def test_rate_limiter_refills_over_time() -> None:
+    now = {"t": 0.0}
+    limiter = RateLimiter(capacity=1, refill_per_second=2.0, clock=lambda: now["t"])
+
+    assert limiter.check("k")[0] is True
+    assert limiter.check("k")[0] is False
+    now["t"] = 0.5
+
+    assert limiter.check("k")[0] is True
+
+
+def test_rate_limiter_isolates_clients() -> None:
+    limiter = RateLimiter(capacity=1, refill_per_second=1.0, clock=lambda: 0.0)
+
+    assert limiter.check("a")[0] is True
+    assert limiter.check("b")[0] is True
+    assert limiter.check("a")[0] is False
+
+
+def test_client_identity_prefers_hashed_bearer_over_ip() -> None:
+    scope: Scope = {
+        "type": "http",
+        "headers": [(b"authorization", b"Bearer secret")],
+        "client": ("1.2.3.4", 5),
+    }
+
+    identity = client_identity(scope)
+
+    assert identity.startswith("key:")
+    assert "secret" not in identity
+
+
+def test_client_identity_falls_back_to_ip_without_a_token() -> None:
+    scope: Scope = {"type": "http", "headers": [], "client": ("1.2.3.4", 5)}
+
+    assert client_identity(scope) == "ip:1.2.3.4"
+
+
+async def _drive_rate_limit(middleware: RateLimitMiddleware, path: str = "/predict") -> int:
+    async def receive() -> Message:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    sent: list[Message] = []
+
+    async def send(message: Message) -> None:
+        sent.append(message)
+
+    scope: Scope = {"type": "http", "path": path, "headers": [], "client": ("1.2.3.4", 1)}
+    await middleware(scope, receive, send)
+    return int(next(m["status"] for m in sent if m["type"] == "http.response.start"))
+
+
+def test_rate_limit_middleware_sheds_a_client_over_its_limit() -> None:
+    app = _SpyApp()
+    limiter = RateLimiter(capacity=1, refill_per_second=0.001, clock=lambda: 0.0)
+    middleware = RateLimitMiddleware(app, limiter=limiter)
+
+    first = asyncio.run(_drive_rate_limit(middleware))
+    second = asyncio.run(_drive_rate_limit(middleware))
+
+    assert first == 200
+    assert second == 429
+
+
+@pytest.mark.parametrize("path", ["/livez", "/readyz", "/metrics"])
+def test_rate_limit_middleware_never_throttles_probes(path: str) -> None:
+    app = _SpyApp()
+    limiter = RateLimiter(capacity=1, refill_per_second=0.001, clock=lambda: 0.0)
+    middleware = RateLimitMiddleware(app, limiter=limiter)
+
+    statuses = [asyncio.run(_drive_rate_limit(middleware, path)) for _ in range(3)]
+
+    assert statuses == [200, 200, 200]

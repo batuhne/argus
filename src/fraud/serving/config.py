@@ -22,6 +22,7 @@ class ServingConfig:
     redis_port: int
     request_timeout_seconds: int
     load_deadline_seconds: float
+    reload_interval_seconds: float
 
     @classmethod
     def from_settings(cls) -> ServingConfig:
@@ -37,6 +38,7 @@ class ServingConfig:
             redis_port=settings.redis_port,
             request_timeout_seconds=settings.mlflow_request_timeout_seconds,
             load_deadline_seconds=settings.model_load_deadline_seconds,
+            reload_interval_seconds=settings.champion_reload_interval_seconds,
         )
 
     @property

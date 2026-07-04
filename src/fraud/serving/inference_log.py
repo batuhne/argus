@@ -63,4 +63,6 @@ class InferenceLogger:
             log.warning("inference_log_dropped", dropped=self._dropped)
 
     def close(self) -> None:
-        self._producer.flush(5.0)
+        pending = self._producer.flush(5.0)
+        if pending:
+            log.warning("inference_log_close_dropped", pending=pending)

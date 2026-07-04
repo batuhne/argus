@@ -279,6 +279,7 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       ARGUS_REDIS_CONNECTION: redis:6379
+      ENVIRONMENT: ${ENVIRONMENT:-local}
       SERVING_API_KEY: ${SERVING_API_KEY:-argus-local-dev-key}
     command:
       - bentoml

@@ -19,7 +19,8 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    environment: str = "local"
+    # Fail closed by default: serving needs a key unless a deploy sets ENVIRONMENT=local.
+    environment: str = "production"
     log_level: str = "INFO"
     log_json: bool = False
     seed: int = 42

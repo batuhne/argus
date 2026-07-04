@@ -19,6 +19,11 @@ def test_serving_api_key_defaults_to_none() -> None:
     assert Settings.model_fields["serving_api_key"].default is None
 
 
+def test_environment_defaults_to_production() -> None:
+    # Fail closed by default: an unconfigured deploy must not silently open the auth boundary.
+    assert Settings.model_fields["environment"].default == "production"
+
+
 @pytest.mark.parametrize("blank", ["", "   "])
 def test_blank_serving_api_key_coerces_to_none(blank: str) -> None:
     assert Settings(serving_api_key=SecretStr(blank)).serving_api_key is None

@@ -168,7 +168,7 @@ class FraudService:
                 )
             )
         except Exception as exc:
-            log.warning("inference_log_failed", error=str(exc))
+            log.warning("inference_log_failed", error=str(exc), exc_info=True)
 
     @bentoml.on_shutdown  # type: ignore[untyped-decorator]
     def _shutdown(self) -> None:

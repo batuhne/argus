@@ -4,6 +4,7 @@ import pandas as pd
 import pytest
 
 from fraud.transforms.encoders import (
+    CategoricalEncoder,
     encoded_feature_names,
     fit_encoder,
     fit_transform_oof,
@@ -78,6 +79,23 @@ def test_missing_is_its_own_learned_category() -> None:
 
     # The single missing row was seen in fit, so NaN maps to its learned frequency, not 0.
     assert out["cat_freq"].iloc[0] == pytest.approx(0.25)
+
+
+def test_transform_uses_the_encoders_own_sentinel() -> None:
+    # A null is keyed with the sentinel the encoder was built with, not the current module
+    # constant, so a persisted encoder keeps working if that constant later changes.
+    encoder = CategoricalEncoder(
+        columns=("cat",),
+        frequency_maps={"cat": {"legacy": 0.9}},
+        target_maps={"cat": {"legacy": 0.7}},
+        global_prior=0.1,
+        sentinel="legacy",
+    )
+
+    out = encoder.transform(pd.DataFrame({"cat": [None]}))
+
+    assert out["cat_freq"].iloc[0] == pytest.approx(0.9)
+    assert out["cat_target"].iloc[0] == pytest.approx(0.7)
 
 
 def test_literal_missing_text_does_not_collide_with_a_null() -> None:

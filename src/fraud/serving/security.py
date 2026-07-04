@@ -7,6 +7,7 @@ import hmac
 import math
 import threading
 import time
+from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
 from http import HTTPStatus
@@ -61,7 +62,7 @@ class RateLimiter:
         self._refill = refill_per_second
         self._max_clients = max_clients
         self._clock = clock
-        self._buckets: dict[str, _Bucket] = {}
+        self._buckets: OrderedDict[str, _Bucket] = OrderedDict()
         self._lock = threading.Lock()
 
     def check(self, identity: str) -> tuple[bool, int]:
@@ -69,10 +70,11 @@ class RateLimiter:
         with self._lock:
             bucket = self._buckets.get(identity)
             if bucket is None:
-                if len(self._buckets) >= self._max_clients:
-                    self._evict_full()
+                self._make_room()
                 bucket = _Bucket(self._capacity, now)
                 self._buckets[identity] = bucket
+            else:
+                self._buckets.move_to_end(identity)
             bucket.tokens = min(
                 self._capacity, bucket.tokens + (now - bucket.updated) * self._refill
             )
@@ -84,9 +86,11 @@ class RateLimiter:
                 return False, 60
             return False, max(1, math.ceil((1.0 - bucket.tokens) / self._refill))
 
-    def _evict_full(self) -> None:
-        for key in [k for k, b in self._buckets.items() if b.tokens >= self._capacity]:
-            del self._buckets[key]
+    def _make_room(self) -> None:
+        # A distinct-identity flood keeps every bucket drained, so evict least-recently-used
+        # until there is room; a full table can never grow past max_clients.
+        while len(self._buckets) >= self._max_clients:
+            self._buckets.popitem(last=False)
 
 
 def client_identity(scope: Scope) -> str:
@@ -94,7 +98,7 @@ def client_identity(scope: Scope) -> str:
         if name == b"authorization":
             scheme, _, token = value.partition(b" ")
             if scheme.lower() == b"bearer" and token.strip():
-                return "key:" + hashlib.sha256(token.strip()).hexdigest()[:16]
+                return "key:" + hashlib.sha256(token.strip()).hexdigest()[:32]
     client = scope.get("client")
     return f"ip:{client[0]}" if client else "ip:unknown"
 

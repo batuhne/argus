@@ -34,12 +34,15 @@ class CategoricalEncoder:
     frequency_maps: dict[str, dict[str, float]]
     target_maps: dict[str, dict[str, float]]
     global_prior: float
+    # Carried on the encoder so transform keys missing values the way fit did, not however the
+    # module constant reads today; a stale-sentinel load then fails loud instead of skewing.
+    sentinel: str = MISSING
 
     def transform(self, frame: pd.DataFrame) -> pd.DataFrame:
         """Encode each categorical column into a frequency and a target column."""
         encoded: dict[str, pd.Series] = {}
         for column in self.columns:
-            keys = _as_keys(frame[column])
+            keys = _as_keys(frame[column], self.sentinel)
             encoded[f"{column}{FREQ_SUFFIX}"] = keys.map(self.frequency_maps[column]).fillna(0.0)
             encoded[f"{column}{TARGET_SUFFIX}"] = keys.map(self.target_maps[column]).fillna(
                 self.global_prior
@@ -134,7 +137,7 @@ def _require_enough_per_class(y: pd.Series, n_splits: int) -> None:
         )
 
 
-def _as_keys(values: pd.Series) -> pd.Series:
+def _as_keys(values: pd.Series, sentinel: str = MISSING) -> pd.Series:
     # Whole-valued numerics take their integer spelling so "13" and "13.0" hash to one category
     # (a stray NaN upcasts a column to float, so int and float must agree). Genuinely fractional
     # values keep their own spelling instead of crashing the int cast.
@@ -147,7 +150,7 @@ def _as_keys(values: pd.Series) -> pd.Series:
         keys = values.astype("string").mask(integral, int_spelling)
     else:
         keys = values.astype("string")
-    return keys.where(values.notna(), MISSING).astype(str)
+    return keys.where(values.notna(), sentinel).astype(str)
 
 
 def _frequency_map(keys: pd.Series) -> dict[str, float]:

@@ -556,9 +556,9 @@ def _log_threshold(
     threshold: ThresholdDecision, test_cost_total: float, test_cost_per_tx: float
 ) -> None:
     mlflow.log_metric("threshold_value", threshold.threshold)
-    mlflow.log_metric("threshold_recall_val", threshold.recall)
-    mlflow.log_metric("threshold_precision_val", threshold.precision)
-    mlflow.log_metric("threshold_flagged_rate_val", threshold.flagged_rate)
+    mlflow.log_metric("threshold_recall_val_select", threshold.recall)
+    mlflow.log_metric("threshold_precision_val_select", threshold.precision)
+    mlflow.log_metric("threshold_flagged_rate_val_select", threshold.flagged_rate)
     mlflow.log_metric("expected_cost_total_usd_test", test_cost_total)
     mlflow.log_metric("expected_cost_per_tx_usd_test", test_cost_per_tx)
     log.info(

@@ -53,7 +53,7 @@ class ChampionReloader:
             log.info("champion_reloaded", version=bundle.version, family=bundle.family)
             return True
         except Exception as exc:
-            log.warning("champion_reload_failed", error=str(exc))
+            log.warning("champion_reload_failed", error=str(exc), exc_info=True)
             return False
 
     def stop(self) -> None:

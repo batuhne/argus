@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
@@ -25,7 +25,8 @@ class StreamConfig:
     dlq_topic: str
     consumer_group: str
     predict_url: str
-    predict_api_key: str | None = None
+    # repr-suppressed so a traceback or log that captures the config never leaks the bearer token.
+    predict_api_key: str | None = field(default=None, repr=False)
 
     @classmethod
     def from_settings(cls) -> StreamConfig:

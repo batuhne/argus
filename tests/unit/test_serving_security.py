@@ -187,6 +187,19 @@ def test_rate_limiter_isolates_clients() -> None:
     assert limiter.check("a")[0] is False
 
 
+def test_rate_limiter_caps_the_identity_table_under_a_flood() -> None:
+    # Every client spends a token so no bucket is idle; the table must still stay bounded,
+    # evicting the least-recently-used identities rather than growing without end.
+    limiter = RateLimiter(capacity=2, refill_per_second=0.0, max_clients=3, clock=lambda: 0.0)
+
+    for i in range(50):
+        limiter.check(f"client-{i}")
+
+    assert len(limiter._buckets) <= 3
+    assert "client-49" in limiter._buckets
+    assert "client-0" not in limiter._buckets
+
+
 def test_client_identity_prefers_hashed_bearer_over_ip() -> None:
     scope: Scope = {
         "type": "http",

@@ -64,3 +64,14 @@ def test_start_does_not_spawn_a_thread_when_disabled() -> None:
     reloader.start()
 
     assert reloader._thread is None
+
+
+def test_start_spawns_a_thread_and_stop_joins_it() -> None:
+    reloader = _reloader(interval_seconds=0.05)
+
+    reloader.start()
+    assert reloader._thread is not None
+    assert reloader._thread.is_alive()
+
+    reloader.stop()
+    assert not reloader._thread.is_alive()

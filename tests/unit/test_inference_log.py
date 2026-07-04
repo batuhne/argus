@@ -1,3 +1,5 @@
+from confluent_kafka import KafkaException
+
 from fraud.serving.inference_log import InferenceLogger
 from fraud.streaming.events import ScoredFeaturesEvent, deserialize_scored_features
 
@@ -56,6 +58,15 @@ def test_log_swallows_buffer_error_without_raising() -> None:
     logger = InferenceLogger(producer)  # type: ignore[arg-type]
     logger.log(_event())  # must not raise
     assert producer.produced == []
+    assert logger._dropped == 1
+
+
+def test_log_swallows_kafka_exception_without_raising() -> None:
+    producer = _FakeProducer(raise_error=KafkaException("broker unavailable"))
+    logger = InferenceLogger(producer)  # type: ignore[arg-type]
+    logger.log(_event())  # must not raise
+    assert producer.produced == []
+    assert logger._dropped == 1
 
 
 def test_delivery_error_counts_as_dropped() -> None:

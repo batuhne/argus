@@ -6,12 +6,13 @@ from typing import Any
 
 import pandas as pd
 import pytest
-from confluent_kafka import OFFSET_END, TopicPartition
+from confluent_kafka import OFFSET_END, KafkaException, TopicPartition
 from prometheus_client import REGISTRY
 
 from fraud.monitoring.config import MonitoringConfig
 from fraud.monitoring.drift import FeatureDrift
 from fraud.monitoring.exporter import (
+    DRIFT_ALERT_DELIVERY_FAILURES,
     DRIFT_COMPUTE_ERRORS,
     DRIFT_KIND_DATA,
     DRIFT_KIND_PERF,
@@ -19,15 +20,21 @@ from fraud.monitoring.exporter import (
     FEATURE_PSI_MAX,
     JOIN_CLOCK_LAG,
     LAST_RECOMPUTE,
+    MODEL_VERSION,
+    MONITOR_CONSUME_ERRORS,
+    MONITOR_FUTURE_TIMESTAMPS,
+    MONITOR_SEEK_FALLBACKS,
     BreachLatch,
     MonitorState,
+    _drain_message,
     _event_time_seconds,
     _route,
     _run_recompute_cycle,
+    _seek_to_window_start,
     _top_psi,
     _window_start_partitions,
 )
-from fraud.streaming.events import ScoredFeaturesEvent, serialize
+from fraud.streaming.events import DriftAlertEvent, ScoredFeaturesEvent, serialize
 from fraud.transforms.features import FEATURE_COLUMNS
 
 
@@ -53,14 +60,14 @@ class _FakeProducer:
     def __init__(self) -> None:
         self.produced: list[tuple[str, bytes]] = []
 
-    def produce(self, topic: str, value: bytes) -> None:
+    def produce(self, topic: str, value: bytes, on_delivery: Any = None) -> None:
         self.produced.append((topic, value))
 
     def poll(self, _timeout: float) -> None:
         return None
 
-    def flush(self, *_args: Any) -> None:
-        return None
+    def flush(self, *_args: Any) -> int:
+        return 0
 
 
 def _cfg(**overrides: Any) -> MonitoringConfig:
@@ -317,7 +324,7 @@ def test_event_time_uses_producer_timestamp_in_seconds() -> None:
         def timestamp(self) -> tuple[int, int]:
             return (1, 5000)
 
-    assert _event_time_seconds(_Ts(), fallback=0.0) == 5.0  # type: ignore[arg-type]
+    assert _event_time_seconds(_Ts(), 0.0, 300.0) == 5.0  # type: ignore[arg-type]
 
 
 def test_event_time_falls_back_to_join_clock_when_timestamp_missing() -> None:
@@ -326,7 +333,20 @@ def test_event_time_falls_back_to_join_clock_when_timestamp_missing() -> None:
             return (0, -1)
 
     # A timeless message must reuse the join clock, never jump to wall-clock now.
-    assert _event_time_seconds(_NoTs(), fallback=123.0) == 123.0  # type: ignore[arg-type]
+    assert _event_time_seconds(_NoTs(), 123.0, 300.0) == 123.0  # type: ignore[arg-type]
+
+
+def test_event_time_clamps_a_far_future_timestamp_to_the_join_clock() -> None:
+    future_ms = int((time.time() + 3600.0) * 1000)
+
+    class _Future:
+        def timestamp(self) -> tuple[int, int]:
+            return (1, future_ms)
+
+    before = _gauge(MONITOR_FUTURE_TIMESTAMPS)
+    # A publish timestamp an hour ahead must not jump the join clock; reuse the fallback.
+    assert _event_time_seconds(_Future(), 42.0, 300.0) == 42.0  # type: ignore[arg-type]
+    assert _gauge(MONITOR_FUTURE_TIMESTAMPS) == before + 1.0
 
 
 class _SeekConsumer:
@@ -357,3 +377,91 @@ def test_window_start_uses_resolved_offsets_and_tails_when_too_recent() -> None:
     # resolved offset kept; a nothing-recent partition tails
     assert result[0].offset == 42
     assert result[1].offset == OFFSET_END
+
+
+def _scored_versioned(transaction_id: str, model_version: int) -> ScoredFeaturesEvent:
+    return ScoredFeaturesEvent(
+        transaction_id=transaction_id,
+        model_version=model_version,
+        fraud_score=0.5,
+        decision=False,
+        features=dict.fromkeys(FEATURE_COLUMNS, 0.5),
+    )
+
+
+def test_model_version_gauge_reports_newest_and_does_not_flicker() -> None:
+    cfg = _cfg()
+    producer = _FakeProducer()
+    state = MonitorState(cfg, _baseline(), producer, drift_fn=_drift_clean)  # type: ignore[arg-type]
+    state.handle_scored_features(_scored_versioned("t-1", 6), event_time=0.0)
+    state.handle_scored_features(_scored_versioned("t-2", 5), event_time=0.0)
+
+    # An interleaved older canary version must not drag the gauge back down.
+    assert _gauge(MODEL_VERSION) == 6
+
+
+class _FailingProducer:
+    def produce(self, topic: str, value: bytes, on_delivery: Any = None) -> None:
+        if on_delivery is not None:
+            on_delivery("broker unreachable", None)
+
+    def poll(self, _timeout: float) -> None:
+        return None
+
+    def flush(self, *_args: Any) -> int:
+        return 0
+
+
+def test_drift_alert_delivery_failure_is_counted() -> None:
+    cfg = _cfg()
+    producer = _FailingProducer()
+    state = MonitorState(cfg, _baseline(), producer, drift_fn=_drift_clean)  # type: ignore[arg-type]
+    alert = DriftAlertEvent(
+        kind=DRIFT_KIND_DATA, metric="feature_drift_psi", value=0.9, threshold=0.2, detected_at="t"
+    )
+    before = _gauge(DRIFT_ALERT_DELIVERY_FAILURES)
+
+    state._emit(alert)
+
+    assert _gauge(DRIFT_ALERT_DELIVERY_FAILURES) == before + 1.0
+
+
+class _RaisingConsumer:
+    def __init__(self) -> None:
+        self.assigned: list[TopicPartition] | None = None
+
+    def offsets_for_times(
+        self, partitions: list[TopicPartition], timeout: float
+    ) -> list[TopicPartition]:
+        raise KafkaException("offset lookup timed out")
+
+    def assign(self, partitions: list[TopicPartition]) -> None:
+        self.assigned = partitions
+
+
+def test_seek_falls_back_to_tailing_on_offset_lookup_failure() -> None:
+    consumer = _RaisingConsumer()
+    partitions = [TopicPartition("scored-features", 0)]
+    before = _gauge(MONITOR_SEEK_FALLBACKS)
+
+    _seek_to_window_start(consumer, partitions, retention_seconds=100.0)  # type: ignore[arg-type]
+
+    assert consumer.assigned is not None
+    assert [tp.offset for tp in consumer.assigned] == [OFFSET_END]
+    assert _gauge(MONITOR_SEEK_FALLBACKS) == before + 1.0
+
+
+class _ErrorMessage:
+    def error(self) -> str:
+        return "broker error"
+
+
+def test_drain_message_counts_a_consume_error() -> None:
+    cfg = _cfg()
+    producer = _FakeProducer()
+    state = MonitorState(cfg, _baseline(), producer, drift_fn=_drift_clean)  # type: ignore[arg-type]
+    before = _gauge(MONITOR_CONSUME_ERRORS)
+
+    _drain_message(state, cfg, _ErrorMessage())  # type: ignore[arg-type]
+
+    assert _gauge(MONITOR_CONSUME_ERRORS) == before + 1.0

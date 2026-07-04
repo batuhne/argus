@@ -101,6 +101,8 @@ class MonitoringParams(_StrictModel):
     recompute_interval_seconds: float = Field(default=15.0, gt=0.0)
     min_matched_for_auprc: int = Field(default=200, ge=1)
     min_current_for_drift: int = Field(default=500, ge=1)
+    max_clock_skew_seconds: float = Field(default=300.0, gt=0.0)
+    max_tracked_ids: int = Field(default=200_000, ge=1)
 
 
 class RetrainingParams(_StrictModel):

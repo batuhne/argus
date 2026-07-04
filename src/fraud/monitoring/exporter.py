@@ -11,7 +11,14 @@ from datetime import UTC, datetime
 from typing import Protocol
 
 import pandas as pd
-from confluent_kafka import OFFSET_END, Consumer, Message, Producer, TopicPartition
+from confluent_kafka import (
+    OFFSET_END,
+    Consumer,
+    KafkaException,
+    Message,
+    Producer,
+    TopicPartition,
+)
 from prometheus_client import Counter, Gauge, start_http_server
 from pydantic import ValidationError
 
@@ -35,6 +42,7 @@ from fraud.transforms.features import FEATURE_COLUMNS
 log = get_logger(__name__)
 
 POLL_TIMEOUT_SECONDS = 1.0
+FLUSH_TIMEOUT_SECONDS = 10.0
 
 DRIFT_KIND_DATA = "data_drift"
 DRIFT_KIND_PERF = "concept_drift"
@@ -65,6 +73,20 @@ MONITOR_POISON_MESSAGES = Counter(
     "argus_monitor_poison_messages_total",
     "Stream messages dropped on a schema mismatch",
     ["topic"],
+)
+MONITOR_CONSUME_ERRORS = Counter(
+    "argus_monitor_consume_errors_total", "Broker errors returned while consuming the stream"
+)
+MONITOR_FUTURE_TIMESTAMPS = Counter(
+    "argus_monitor_future_timestamps_total",
+    "Stream messages whose publish timestamp was implausibly ahead of wall clock",
+)
+DRIFT_ALERT_DELIVERY_FAILURES = Counter(
+    "argus_drift_alert_delivery_failures_total", "Drift alerts that failed to enqueue or deliver"
+)
+MONITOR_SEEK_FALLBACKS = Counter(
+    "argus_monitor_seek_fallbacks_total",
+    "Window seeks on assignment that fell back to tailing after an offset lookup failed",
 )
 
 
@@ -117,12 +139,14 @@ class MonitorState:
     _features: deque[dict[str, float]] = field(init=False)
     _data_latch: BreachLatch = field(init=False)
     _perf_latch: BreachLatch = field(init=False)
+    _max_model_version: int = field(init=False, default=0)
 
     def __post_init__(self) -> None:
         self._perf = RollingPerformance(
             cost_matrix=self.cfg.cost_matrix,
             window_size=self.cfg.window_size,
             retention_seconds=self.cfg.retention_seconds,
+            max_tracked_ids=self.cfg.max_tracked_ids,
         )
         self._features = deque(maxlen=self.cfg.window_size)
         self._data_latch = BreachLatch(self.cfg.drift_debounce_cycles)
@@ -137,7 +161,14 @@ class MonitorState:
             {name: _feature_value(event.features.get(name)) for name in FEATURE_COLUMNS}
         )
         SCORED_EVENTS.inc()
-        MODEL_VERSION.set(event.model_version)
+        self._note_model_version(event.model_version)
+
+    def _note_model_version(self, version: int) -> None:
+        # A canary and champion interleave versions on the stream; report the newest so the
+        # gauge does not flicker. A true rollback surfaces on the next retrain's higher version.
+        if version > self._max_model_version:
+            self._max_model_version = version
+            MODEL_VERSION.set(version)
 
     def handle_label(self, transaction_id: str, is_fraud: int, *, event_time: float) -> None:
         self._perf.observe_label(transaction_id, is_fraud, event_time=event_time)
@@ -220,7 +251,15 @@ class MonitorState:
         return auprc < self.cfg.auprc_floor
 
     def _emit(self, alert: DriftAlertEvent) -> None:
-        self.producer.produce(self.cfg.drift_alerts_topic, value=serialize(alert))
+        try:
+            self.producer.produce(
+                self.cfg.drift_alerts_topic, value=serialize(alert), on_delivery=_on_alert_delivery
+            )
+        except BufferError:
+            # The retrain trigger reads this topic; a dropped alert leaves drift unanswered.
+            DRIFT_ALERT_DELIVERY_FAILURES.inc()
+            log.error("drift_alert_enqueue_failed", kind=alert.kind, metric=alert.metric)
+            return
         self.producer.poll(0)
         DRIFT_ALERTS.labels(kind=alert.kind).inc()
         log.warning(
@@ -230,6 +269,12 @@ class MonitorState:
             value=alert.value,
             threshold=alert.threshold,
         )
+
+
+def _on_alert_delivery(error: object, _message: object) -> None:
+    if error is not None:
+        DRIFT_ALERT_DELIVERY_FAILURES.inc()
+        log.error("drift_alert_delivery_failed", error=str(error))
 
 
 def _data_drift_alert(drift: FeatureDrift) -> DriftAlertEvent:
@@ -278,18 +323,31 @@ def run_exporter(cfg: MonitoringConfig, shutdown: ShutdownFlag | None = None) ->
         while not shutdown.requested:
             message = consumer.poll(POLL_TIMEOUT_SECONDS)
             if message is not None:
-                if message.error() is not None:
-                    log.warning("monitor_consume_error", error=str(message.error()))
-                else:
-                    _route(state, cfg, message)
+                _drain_message(state, cfg, message)
             if time.monotonic() - last_recompute >= cfg.recompute_interval_seconds:
                 drift_job = _run_recompute_cycle(state, executor, drift_job)
                 last_recompute = time.monotonic()
     finally:
+        # Independent cleanup: a broken consumer must not skip the producer flush that drains
+        # any pending drift alert.
         executor.shutdown(wait=False, cancel_futures=True)
-        consumer.close()
-        state.producer.flush()
+        try:
+            consumer.close()
+        except KafkaException as exc:
+            log.warning("consumer_close_failed", error=str(exc))
+        pending = state.producer.flush(FLUSH_TIMEOUT_SECONDS)
+        if pending:
+            log.warning("exporter_flush_timeout", pending=pending)
         log.info("exporter_stopped")
+
+
+def _drain_message(state: MonitorState, cfg: MonitoringConfig, message: Message) -> None:
+    if message.error() is not None:
+        # The loop keeps running but ingests nothing, so the join starves; count it as the signal.
+        MONITOR_CONSUME_ERRORS.inc()
+        log.warning("monitor_consume_error", error=str(message.error()))
+        return
+    _route(state, cfg, message)
 
 
 def _run_recompute_cycle(
@@ -312,7 +370,17 @@ def _seek_to_window_start(
     consumer: Consumer, partitions: list[TopicPartition], retention_seconds: float
 ) -> None:
     cutoff_ms = int((time.time() - retention_seconds) * 1000)
-    consumer.assign(_window_start_partitions(consumer, partitions, cutoff_ms))
+    try:
+        consumer.assign(_window_start_partitions(consumer, partitions, cutoff_ms))
+    except KafkaException as exc:
+        # A failed offset lookup must not leave the consumer unassigned and silently idle. Tail
+        # each partition so the loop resumes on live traffic; the window rebuild is lost, not the
+        # stream. _window_start_partitions has already overwritten the offsets, so reset them.
+        MONITOR_SEEK_FALLBACKS.inc()
+        log.error("monitor_seek_failed", error=str(exc), exc_info=True)
+        for partition in partitions:
+            partition.offset = OFFSET_END
+        consumer.assign(partitions)
 
 
 def _window_start_partitions(
@@ -332,7 +400,7 @@ def _route(state: MonitorState, cfg: MonitoringConfig, message: Message) -> None
     payload = message.value()
     if payload is None:
         return
-    event_time = _event_time_seconds(message, state.current_event_time)
+    event_time = _event_time_seconds(message, state.current_event_time, cfg.max_clock_skew_seconds)
     try:
         if message.topic() == cfg.scored_features_topic:
             scored = deserialize_scored_features(payload)
@@ -345,13 +413,18 @@ def _route(state: MonitorState, cfg: MonitoringConfig, message: Message) -> None
         log.warning("monitor_message_skipped", topic=message.topic(), error=str(exc))
 
 
-def _event_time_seconds(message: Message, fallback: float) -> float:
-    """Join clock: the producer's wall-clock publish time. A timeless message reuses the current
-    join clock so one anomaly cannot jump it and evict live pending entries."""
+def _event_time_seconds(message: Message, fallback: float, max_clock_skew_seconds: float) -> float:
+    """Join clock: the producer's wall-clock publish time. A timeless or implausibly future
+    message reuses the current join clock so one anomaly cannot jump it forward and evict every
+    live pending entry (which JOIN_CLOCK_LAG would clamp to zero and hide)."""
     _, timestamp_ms = message.timestamp()
     if timestamp_ms < 0:
         return fallback
-    return timestamp_ms / 1000.0
+    seconds = timestamp_ms / 1000.0
+    if seconds > time.time() + max_clock_skew_seconds:
+        MONITOR_FUTURE_TIMESTAMPS.inc()
+        return fallback
+    return seconds
 
 
 def _build_consumer(cfg: MonitoringConfig) -> Consumer:

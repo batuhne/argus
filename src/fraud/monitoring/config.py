@@ -36,6 +36,8 @@ class MonitoringConfig:
     recompute_interval_seconds: float
     min_matched_for_auprc: int
     min_current_for_drift: int
+    max_clock_skew_seconds: float
+    max_tracked_ids: int
 
     @classmethod
     def from_settings(cls) -> MonitoringConfig:
@@ -64,4 +66,6 @@ class MonitoringConfig:
             recompute_interval_seconds=monitoring.recompute_interval_seconds,
             min_matched_for_auprc=monitoring.min_matched_for_auprc,
             min_current_for_drift=monitoring.min_current_for_drift,
+            max_clock_skew_seconds=monitoring.max_clock_skew_seconds,
+            max_tracked_ids=monitoring.max_tracked_ids,
         )

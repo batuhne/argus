@@ -64,6 +64,12 @@ monitoring:
   recompute_interval_seconds: 15.0
   min_matched_for_auprc: 200
   min_current_for_drift: 500
+  # reject a publish timestamp more than this far ahead of wall clock, so one skewed
+  # producer clock cannot jump the join window and evict live pending scores
+  max_clock_skew_seconds: 300.0
+  # hard cap on in-flight tracked transaction ids, a memory backstop if the event clock
+  # ever stalls; retention_seconds eviction is the primary bound
+  max_tracked_ids: 200000
 
 retraining:
   deployment_name: argus-retraining/argus-retraining

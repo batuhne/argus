@@ -138,7 +138,8 @@ groups:
           description: "A feature PSI is above 0.2 versus the training baseline."
           runbook_url: "https://github.com/batuhne/argus/blob/main/docs/runbooks.md#feature-drift-detected"
 
-      # Threshold mirrors monitoring.auprc_floor in params.yaml; keep the two in sync.
+      # Thresholds mirror monitoring.auprc_floor and min_matched_for_auprc in params.yaml; keep
+      # them in sync (tests/unit/test_alerts_params_sync.py guards the drift).
       - alert: ModelPerformanceDecay
         expr: argus_rolling_auprc < 0.30 and argus_matched_join > 200
         for: 5m
@@ -218,6 +219,45 @@ groups:
         annotations:
           summary: "Monitor is dropping stream messages on schema mismatch"
           description: "Scored-features or label messages failed validation in the last 15m; a producer may have shipped a breaking schema change."
+          runbook_url: "https://github.com/batuhne/argus/blob/main/docs/runbooks.md#monitor-exporter-down-or-stalled"
+
+      # The consume loop keeps running on a broker error but ingests nothing, so the join
+      # silently starves; the counter is the only signal a sustained consume error is happening.
+      - alert: MonitorConsumeErrors
+        expr: increase(argus_monitor_consume_errors_total[15m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: monitor
+        annotations:
+          summary: "Monitor is hitting stream consume errors"
+          description: "The monitor consumer returned broker errors in the last 15m; the join may be starving."
+          runbook_url: "https://github.com/batuhne/argus/blob/main/docs/runbooks.md#monitor-exporter-down-or-stalled"
+
+      # Drift alerts are the retrain trigger, so a delivery failure drops the signal silently and a
+      # drifting model would never be retrained; count both enqueue and broker-ack failures.
+      - alert: MonitorDriftAlertDeliveryFailing
+        expr: increase(argus_drift_alert_delivery_failures_total[15m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: monitor
+        annotations:
+          summary: "Monitor drift-alert delivery is failing"
+          description: "A drift alert failed to publish in the last 15m; a retrain trigger may be lost."
+          runbook_url: "https://github.com/batuhne/argus/blob/main/docs/runbooks.md#monitor-exporter-down-or-stalled"
+
+      # A skewed producer clock stamps events in the future; the monitor clamps them to the join
+      # clock, but a sustained rate means producer clocks are drifting off real time.
+      - alert: MonitorFutureTimestamps
+        expr: increase(argus_monitor_future_timestamps_total[15m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: monitor
+        annotations:
+          summary: "Monitor is seeing future-dated stream messages"
+          description: "Events arrived stamped ahead of wall clock in the last 15m; a producer clock is likely skewed."
           runbook_url: "https://github.com/batuhne/argus/blob/main/docs/runbooks.md#monitor-exporter-down-or-stalled"
 
   - name: retrain_health

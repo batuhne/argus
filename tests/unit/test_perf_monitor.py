@@ -4,6 +4,7 @@ import pytest
 
 from fraud.evaluation.business import CostMatrix
 from fraud.monitoring.perf_monitor import (
+    DEFAULT_MAX_TRACKED_IDS,
     DEFAULT_RETENTION_SECONDS,
     DEFAULT_WINDOW_SIZE,
     RollingPerformance,
@@ -15,9 +16,13 @@ MATRIX = CostMatrix(fn_cost_usd=100.0, fp_cost_usd=5.0)
 def _monitor(
     window_size: int = DEFAULT_WINDOW_SIZE,
     retention_seconds: float = DEFAULT_RETENTION_SECONDS,
+    max_tracked_ids: int = DEFAULT_MAX_TRACKED_IDS,
 ) -> RollingPerformance:
     return RollingPerformance(
-        cost_matrix=MATRIX, window_size=window_size, retention_seconds=retention_seconds
+        cost_matrix=MATRIX,
+        window_size=window_size,
+        retention_seconds=retention_seconds,
+        max_tracked_ids=max_tracked_ids,
     )
 
 
@@ -138,3 +143,12 @@ def test_metrics_are_nan_when_empty() -> None:
     assert math.isnan(monitor.rolling_auprc())
     assert math.isnan(monitor.business_cost_per_txn())
     assert math.isnan(monitor.flagged_rate())
+
+
+def test_tracked_ids_are_capped_when_the_clock_never_advances() -> None:
+    # A frozen event clock disables retention eviction, so the hard cap is the only backstop:
+    # the oldest pending ids are dropped rather than growing the join table without bound.
+    monitor = _monitor(retention_seconds=1000.0, max_tracked_ids=3)
+    for i in range(10):
+        monitor.observe_score(f"t-{i}", 0.5, decision=False, event_time=0.0)
+    assert monitor.pending_count <= 3

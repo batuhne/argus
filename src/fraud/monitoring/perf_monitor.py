@@ -14,6 +14,9 @@ from fraud.evaluation.metrics import auprc
 DEFAULT_WINDOW_SIZE = 5000
 # Seconds a score stays joinable, set above the longest label lag; also the restart-replay window.
 DEFAULT_RETENTION_SECONDS = 1800.0
+# Hard ceiling on tracked ids: retention eviction is the primary bound, but a stalled event
+# clock never advances the cutoff, so this backstops memory against unbounded growth.
+DEFAULT_MAX_TRACKED_IDS = 200_000
 
 _V = TypeVar("_V")
 
@@ -26,6 +29,7 @@ class RollingPerformance:
     cost_matrix: CostMatrix
     window_size: int = DEFAULT_WINDOW_SIZE
     retention_seconds: float = DEFAULT_RETENTION_SECONDS
+    max_tracked_ids: int = DEFAULT_MAX_TRACKED_IDS
     _pending: OrderedDict[str, tuple[float, bool, float]] = field(init=False)
     _early_labels: OrderedDict[str, tuple[int, float]] = field(init=False)
     _resolved: OrderedDict[str, float] = field(init=False)
@@ -52,6 +56,7 @@ class RollingPerformance:
             return
         self._pending[transaction_id] = (fraud_score, decision, event_time)
         self._pending.move_to_end(transaction_id)
+        _cap(self._pending, self.max_tracked_ids)
 
     def observe_label(self, transaction_id: str, is_fraud: int, *, event_time: float) -> None:
         self._advance(event_time)
@@ -63,6 +68,7 @@ class RollingPerformance:
         if scored is None:
             self._early_labels[transaction_id] = (is_fraud, event_time)
             self._early_labels.move_to_end(transaction_id)
+            _cap(self._early_labels, self.max_tracked_ids)
             return
         self._record(transaction_id, scored[0], scored[1], is_fraud, event_time)
 
@@ -113,6 +119,7 @@ class RollingPerformance:
     ) -> None:
         self._matched.append((fraud_score, label, decision))
         self._resolved[transaction_id] = event_time
+        _cap(self._resolved, self.max_tracked_ids)
 
     def _expired(self, event_time: float) -> bool:
         return event_time < self._high_water - self.retention_seconds
@@ -136,4 +143,11 @@ def _evict_before(
         oldest = next(iter(mapping.values()))
         if event_time_of(oldest) >= cutoff:
             break
+        mapping.popitem(last=False)
+
+
+def _cap(mapping: OrderedDict[str, _V], max_size: int) -> None:
+    """Drop the oldest entries once the table exceeds its ceiling, so a stalled clock that
+    disables retention eviction cannot grow the join tables without bound."""
+    while len(mapping) > max_size:
         mapping.popitem(last=False)

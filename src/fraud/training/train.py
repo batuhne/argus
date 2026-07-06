@@ -631,9 +631,9 @@ def _promote_champion(
 
 
 def main() -> None:
-    print("argus training launched", flush=True)
     settings = get_settings()
     configure_logging(settings.log_level, settings.log_json)
+    log.info("training_launched")
     cfg = TrainingConfig.from_settings()
     log.info("config_loaded", experiment=cfg.experiment_name, model=cfg.model_name)
     result = run_training(cfg)

@@ -34,6 +34,7 @@ from fraud.registry import (
     get_version_tags,
 )
 from fraud.transforms.encoders import CategoricalEncoder, load_encoder
+from fraud.transforms.features import FEATURE_COLUMNS
 
 log = get_logger(__name__)
 
@@ -79,6 +80,10 @@ class ArtifactIntegrityError(RuntimeError):
     """A pickled artifact's hash does not match the value recorded at training time."""
 
 
+class FeatureContractError(RuntimeError):
+    """The champion model's feature names do not match the serving feature contract."""
+
+
 def load_champion(cfg: ChampionLoadConfig) -> ModelBundle:
     """Load the champion bundle, retrying a not-yet-ready registry until the deadline."""
     os.environ.setdefault("MLFLOW_HTTP_REQUEST_TIMEOUT", str(cfg.request_timeout_seconds))
@@ -121,6 +126,7 @@ def _load_bundle(cfg: ChampionLoadConfig) -> ModelBundle:
     # Pin the resolved version so the model matches its version-loaded calibrator and encoder.
     model_uri = f"models:/{cfg.model_name}/{version}"
     model = _load_model_by_family(family, model_uri)
+    _verify_feature_contract(family, model)
     run_id = get_version_run_id(cfg.model_name, version)
     run_tags = get_run_tags(run_id)
     calibrator = _load_calibrator(run_id, run_tags)
@@ -155,6 +161,29 @@ def _load_model_by_family(family: str, model_uri: str) -> Any:
     if family == "catboost":
         return mlflow.catboost.load_model(model_uri)
     raise RuntimeError(f"unsupported champion family {family!r}")
+
+
+def _verify_feature_contract(family: str, model: Any) -> None:
+    names = _model_feature_names(family, model)
+    if names and set(names) != set(FEATURE_COLUMNS):
+        missing = sorted(set(FEATURE_COLUMNS) - set(names))
+        extra = sorted(set(names) - set(FEATURE_COLUMNS))
+        raise FeatureContractError(
+            f"champion feature set does not match the serving contract; "
+            f"missing={missing} unexpected={extra}"
+        )
+
+
+def _model_feature_names(family: str, model: Any) -> tuple[str, ...]:
+    if family == "xgboost":
+        names = model.get_booster().feature_names
+    elif family == "lightgbm":
+        names = model.feature_name_
+    elif family == "catboost":
+        names = model.feature_names_
+    else:
+        names = None
+    return tuple(names) if names else ()
 
 
 def _load_calibrator(run_id: str, run_tags: dict[str, str]) -> IsotonicCalibrator:

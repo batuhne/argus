@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import warnings
 from dataclasses import dataclass
 from typing import Any
 
@@ -10,6 +9,10 @@ import pandas as pd
 from catboost import CatBoostClassifier
 from lightgbm import LGBMClassifier
 from xgboost import XGBClassifier
+
+from fraud.common.logging import get_logger
+
+log = get_logger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,10 +34,7 @@ def compute_scale_pos_weight(y: pd.Series) -> float:
     positives = int(y.sum())
     negatives = len(y) - positives
     if positives == 0 or negatives == 0:
-        warnings.warn(
-            "scale_pos_weight undefined for single-class labels; falling back to 1.0",
-            stacklevel=2,
-        )
+        log.warning("scale_pos_weight_undefined", reason="single-class labels", fallback=1.0)
         return 1.0
     return float(negatives / positives)
 

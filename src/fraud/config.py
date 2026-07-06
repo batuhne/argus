@@ -1,18 +1,13 @@
 """Runtime settings loaded from the environment and .env via pydantic-settings."""
 
 from functools import lru_cache
+from urllib.parse import urlparse
 
 from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Runtime configuration read from the environment and a local .env file.
-
-    Connection defaults point at the local docker compose stack. Secrets are
-    held as SecretStr so they do not leak through logs or repr.
-    """
-
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -52,6 +47,13 @@ class Settings(BaseSettings):
     def _blank_api_key_is_unset(cls, value: SecretStr | None) -> SecretStr | None:
         if value is not None and not value.get_secret_value().strip():
             return None
+        return value
+
+    @field_validator("serving_predict_url", mode="after")
+    @classmethod
+    def _predict_url_is_http(cls, value: str) -> str:
+        if urlparse(value).scheme not in ("http", "https"):
+            raise ValueError("serving_predict_url must be an http(s) URL")
         return value
 
 

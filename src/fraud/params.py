@@ -1,12 +1,14 @@
 """Typed, validated model of params.yaml; unknown or out-of-range values fail at load."""
 
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 PARAMS_FILE = Path("params.yaml")
+
+UnitFraction = Annotated[float, Field(gt=0.0, le=1.0)]
 
 
 class _StrictModel(BaseModel):
@@ -56,7 +58,7 @@ class ShapParams(_StrictModel):
 
 
 class TrainingParams(_StrictModel):
-    candidate_alias: str = "candidate"
+    candidate_alias: str = Field(default="candidate", min_length=1)
     optuna: OptunaParams = Field(default_factory=OptunaParams)
     encoder: EncoderParams = Field(default_factory=EncoderParams)
     shap: ShapParams = Field(default_factory=ShapParams)
@@ -68,7 +70,6 @@ class CostMatrixParams(_StrictModel):
 
 
 class CalibrationParams(_StrictModel):
-    # Only isotonic is implemented today.
     method: Literal["isotonic"] = "isotonic"
 
 
@@ -83,9 +84,9 @@ class GateParams(_StrictModel):
 
 
 class EvaluationParams(_StrictModel):
-    champion_alias: str = "champion"
+    champion_alias: str = Field(default="champion", min_length=1)
     cost_matrix: CostMatrixParams = Field(default_factory=CostMatrixParams)
-    recall_at_k_levels: tuple[float, ...] = (0.005, 0.01, 0.05)
+    recall_at_k_levels: tuple[UnitFraction, ...] = (0.005, 0.01, 0.05)
     calibration: CalibrationParams = Field(default_factory=CalibrationParams)
     threshold: ThresholdParams = Field(default_factory=ThresholdParams)
     gate: GateParams = Field(default_factory=GateParams)
@@ -106,7 +107,7 @@ class MonitoringParams(_StrictModel):
 
 
 class RetrainingParams(_StrictModel):
-    deployment_name: str = "argus-retraining/argus-retraining"
+    deployment_name: str = Field(default="argus-retraining/argus-retraining", min_length=1)
     cron: str = "0 3 * * 1"
     # A retrain is expensive, so back-to-back drift alerts inside this window are
     # collapsed into one run to avoid a retraining storm.
@@ -116,7 +117,7 @@ class RetrainingParams(_StrictModel):
 
 
 class CanaryParams(_StrictModel):
-    traffic_steps: tuple[float, ...] = (0.05, 0.25, 1.0)
+    traffic_steps: tuple[UnitFraction, ...] = (0.05, 0.25, 1.0)
     max_p99_latency_ms: float = Field(default=50.0, gt=0.0)
     max_error_rate: float = Field(default=0.001, ge=0.0, le=1.0)
     # The canary's AUPRC (once delayed labels arrive) must stay within this

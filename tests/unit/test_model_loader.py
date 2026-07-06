@@ -15,14 +15,17 @@ from fraud.model_loader import (
     ArtifactIntegrityError,
     ChampionLoadConfig,
     ChampionUnavailableError,
+    FeatureContractError,
     _backoff_delay,
     _load_model_by_family,
     _required_threshold,
     _verify_artifact_integrity,
+    _verify_feature_contract,
     load_champion,
 )
 from fraud.registry import ARTIFACT_SHA256_TAG_CALIBRATOR, CHAMPION_TAG_THRESHOLD
 from fraud.serving.config import ServingConfig
+from fraud.transforms.features import FEATURE_COLUMNS
 
 
 def test_load_model_by_family_dispatches_to_each_flavor(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -165,3 +168,21 @@ def test_verify_artifact_integrity_rejects_a_missing_hash_tag(tmp_path: Path) ->
     path.write_bytes(b"model-bytes")
     with pytest.raises(ArtifactIntegrityError, match="retrain"):
         _verify_artifact_integrity(path, {}, ARTIFACT_SHA256_TAG_CALIBRATOR, "calibrator")
+
+
+class _NamedModel:
+    def __init__(self, names: list[str]) -> None:
+        self.feature_name_ = names
+
+
+def test_feature_contract_accepts_the_serving_columns() -> None:
+    _verify_feature_contract("lightgbm", _NamedModel(list(FEATURE_COLUMNS)))
+
+
+def test_feature_contract_rejects_a_mismatched_model() -> None:
+    with pytest.raises(FeatureContractError, match="unexpected"):
+        _verify_feature_contract("lightgbm", _NamedModel([*FEATURE_COLUMNS, "stowaway"]))
+
+
+def test_feature_contract_skips_when_names_are_absent() -> None:
+    _verify_feature_contract("lightgbm", _NamedModel([]))

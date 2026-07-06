@@ -9,12 +9,10 @@ from structlog.typing import FilteringBoundLogger, Processor
 
 
 def configure_logging(level: str = "INFO", json_logs: bool = False) -> None:
-    """Configure structlog once at process start.
-
-    Console rendering for local work, JSON for containers where logs are
-    scraped. Safe to call more than once.
-    """
-    log_level = logging.getLevelNamesMapping().get(level.upper(), logging.INFO)
+    """Configure structlog once at process start; safe to call again."""
+    known_levels = logging.getLevelNamesMapping()
+    unknown_level = level.upper() not in known_levels
+    log_level = known_levels.get(level.upper(), logging.INFO)
 
     processors: list[Processor] = [
         structlog.contextvars.merge_contextvars,
@@ -33,6 +31,8 @@ def configure_logging(level: str = "INFO", json_logs: bool = False) -> None:
         logger_factory=structlog.PrintLoggerFactory(file=sys.stdout),
         cache_logger_on_first_use=True,
     )
+    if unknown_level:
+        get_logger(__name__).warning("unknown_log_level", requested=level, using="INFO")
 
 
 def get_logger(name: str | None = None) -> FilteringBoundLogger:

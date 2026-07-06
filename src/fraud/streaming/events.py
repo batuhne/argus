@@ -131,11 +131,11 @@ class LabelEvent(BaseModel):
 class DriftAlertEvent(BaseModel):
     """Machine-readable retraining trigger published when a monitor breach persists."""
 
-    kind: str
-    metric: str
-    value: float
-    threshold: float
-    detected_at: str
+    kind: str = Field(min_length=1, max_length=64)
+    metric: str = Field(min_length=1, max_length=64)
+    value: FiniteFloat
+    threshold: FiniteFloat
+    detected_at: str = Field(min_length=1, max_length=64)
 
 
 def serialize(event: BaseModel) -> bytes:

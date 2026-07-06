@@ -1,5 +1,6 @@
 import pandas as pd
 import pytest
+from structlog.testing import capture_logs
 
 from fraud.training.models import (
     BoostingHyperparams,
@@ -16,13 +17,15 @@ def test_scale_pos_weight_matches_neg_over_pos() -> None:
 
 
 def test_scale_pos_weight_falls_back_when_no_positives() -> None:
-    with pytest.warns(UserWarning, match="single-class"):
+    with capture_logs() as logs:
         assert compute_scale_pos_weight(pd.Series([0, 0, 0])) == 1.0
+    assert any(entry["event"] == "scale_pos_weight_undefined" for entry in logs)
 
 
 def test_scale_pos_weight_falls_back_when_no_negatives() -> None:
-    with pytest.warns(UserWarning, match="single-class"):
+    with capture_logs() as logs:
         assert compute_scale_pos_weight(pd.Series([1, 1, 1])) == 1.0
+    assert any(entry["event"] == "scale_pos_weight_undefined" for entry in logs)
 
 
 def test_build_xgb_propagates_seed_and_imbalance() -> None:

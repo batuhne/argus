@@ -1,5 +1,6 @@
 import dataclasses
 import time
+from pathlib import Path
 from typing import Any
 
 import mlflow.catboost
@@ -7,17 +8,20 @@ import mlflow.lightgbm
 import mlflow.xgboost
 import pytest
 
+from fraud.common.lineage import sha256_file
 from fraud.model_loader import (
     _RETRY_BASE_SECONDS,
     _RETRY_CAP_SECONDS,
+    ArtifactIntegrityError,
     ChampionLoadConfig,
     ChampionUnavailableError,
     _backoff_delay,
     _load_model_by_family,
     _required_threshold,
+    _verify_artifact_integrity,
     load_champion,
 )
-from fraud.registry import CHAMPION_TAG_THRESHOLD
+from fraud.registry import ARTIFACT_SHA256_TAG_CALIBRATOR, CHAMPION_TAG_THRESHOLD
 from fraud.serving.config import ServingConfig
 
 
@@ -97,6 +101,23 @@ def test_load_champion_does_not_retry_misconfiguration(monkeypatch: pytest.Monke
     assert calls["n"] == 1
 
 
+def test_load_champion_does_not_retry_an_integrity_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = {"n": 0}
+
+    def tampered(_cfg: ChampionLoadConfig) -> object:
+        calls["n"] += 1
+        raise ArtifactIntegrityError("calibrator artifact hash does not match the recorded")
+
+    monkeypatch.setattr("fraud.model_loader._load_bundle", tampered)
+    monkeypatch.setattr(time, "sleep", lambda _s: None)
+
+    with pytest.raises(ArtifactIntegrityError):
+        load_champion(_cfg(load_deadline_seconds=30.0))
+    assert calls["n"] == 1
+
+
 def test_backoff_delay_increases_and_is_capped() -> None:
     assert _RETRY_BASE_SECONDS <= _backoff_delay(0) <= 2 * _RETRY_BASE_SECONDS
     assert _RETRY_CAP_SECONDS <= _backoff_delay(20) <= _RETRY_CAP_SECONDS + _RETRY_BASE_SECONDS
@@ -121,3 +142,26 @@ def test_required_threshold_rejects_a_non_numeric_tag(raw: str) -> None:
 def test_required_threshold_rejects_out_of_range_or_non_finite(raw: str) -> None:
     with pytest.raises(ChampionUnavailableError, match="out-of-range"):
         _required_threshold({CHAMPION_TAG_THRESHOLD: raw}, 1)
+
+
+def test_verify_artifact_integrity_accepts_a_matching_hash(tmp_path: Path) -> None:
+    path = tmp_path / "artifact.joblib"
+    path.write_bytes(b"model-bytes")
+    tags = {ARTIFACT_SHA256_TAG_CALIBRATOR: sha256_file(path)}
+    _verify_artifact_integrity(path, tags, ARTIFACT_SHA256_TAG_CALIBRATOR, "calibrator")
+
+
+def test_verify_artifact_integrity_rejects_a_tampered_artifact(tmp_path: Path) -> None:
+    path = tmp_path / "artifact.joblib"
+    path.write_bytes(b"model-bytes")
+    tags = {ARTIFACT_SHA256_TAG_CALIBRATOR: sha256_file(path)}
+    path.write_bytes(b"swapped-bytes")
+    with pytest.raises(ArtifactIntegrityError, match="tampered"):
+        _verify_artifact_integrity(path, tags, ARTIFACT_SHA256_TAG_CALIBRATOR, "calibrator")
+
+
+def test_verify_artifact_integrity_rejects_a_missing_hash_tag(tmp_path: Path) -> None:
+    path = tmp_path / "artifact.joblib"
+    path.write_bytes(b"model-bytes")
+    with pytest.raises(ArtifactIntegrityError, match="retrain"):
+        _verify_artifact_integrity(path, {}, ARTIFACT_SHA256_TAG_CALIBRATOR, "calibrator")

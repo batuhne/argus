@@ -19,6 +19,8 @@ spec:
         argus.io/app: serving
     spec:
       serviceAccountName: argus-serving
+      # Drain mirrored traffic on shutdown the way stable drains real traffic.
+      terminationGracePeriodSeconds: 45
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -28,6 +30,7 @@ spec:
       containers:
         - name: serving
           image: argus-app
+          imagePullPolicy: Always
           args:
             - bentoml
             - serve
@@ -49,6 +52,13 @@ spec:
             limits:
               cpu: "1"
               memory: "1Gi"
+          # The server binds only after a blocking champion load, so shield liveness until then.
+          startupProbe:
+            httpGet:
+              path: /livez
+              port: http
+            periodSeconds: 5
+            failureThreshold: 24
           livenessProbe:
             httpGet:
               path: /livez
@@ -61,6 +71,10 @@ spec:
               port: http
             initialDelaySeconds: 10
             periodSeconds: 10
+          lifecycle:
+            preStop:
+              exec:
+                command: ["python", "-c", "import time; time.sleep(5)"]
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

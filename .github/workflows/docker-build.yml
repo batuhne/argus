@@ -13,6 +13,7 @@ concurrency:
 permissions:
   contents: read
   packages: write
+  id-token: write # keyless cosign signing via GitHub OIDC
 
 env:
   IMAGE: ghcr.io/${{ github.repository }}
@@ -59,6 +60,7 @@ jobs:
           ignore-unfixed: true
           exit-code: "1"
       - name: Push the scanned image
+        id: push
         env:
           TAGS: ${{ steps.meta.outputs.tags }}
         run: |
@@ -68,4 +70,21 @@ jobs:
             docker push "$tag"
           done <<< "$TAGS"
           first=$(printf '%s\n' "$TAGS" | head -n1)
-          echo "Pushed scanned image: $(docker inspect --format '{{index .RepoDigests 0}}' "$first")" >> "$GITHUB_STEP_SUMMARY"
+          digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$first")
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "Pushed scanned image: $digest" >> "$GITHUB_STEP_SUMMARY"
+      - name: Generate the image SBOM
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.SCAN_TAG }}
+          scan-type: image
+          format: spdx-json
+          output: sbom.spdx.json
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Sign the image and attest its SBOM
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          cosign sign --yes "$DIGEST"
+          cosign attest --yes --type spdxjson --predicate sbom.spdx.json "$DIGEST"

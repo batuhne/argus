@@ -30,6 +30,7 @@ spec:
       containers:
         - name: serving
           image: argus-app
+          imagePullPolicy: Always
           args:
             - bentoml
             - serve
@@ -51,6 +52,13 @@ spec:
             limits:
               cpu: "1"
               memory: "1Gi"
+          # The server binds only after a blocking champion load, so shield liveness until then.
+          startupProbe:
+            httpGet:
+              path: /livez
+              port: http
+            periodSeconds: 5
+            failureThreshold: 24
           livenessProbe:
             httpGet:
               path: /livez

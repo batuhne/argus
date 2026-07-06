@@ -19,7 +19,7 @@ import pandas as pd
 from numpy.typing import NDArray
 from sklearn.model_selection import train_test_split
 
-from fraud.common.lineage import collect_lineage
+from fraud.common.lineage import collect_lineage, sha256_file
 from fraud.common.logging import configure_logging, get_logger
 from fraud.common.seed import set_seed
 from fraud.config import get_settings
@@ -47,6 +47,8 @@ from fraud.evaluation.threshold import (
 from fraud.params import load_params
 from fraud.paths import FEATURE_REPO_DIR, FEATURE_SERVICE, PROCESSED_DIR
 from fraud.registry import (
+    ARTIFACT_SHA256_TAG_CALIBRATOR,
+    ARTIFACT_SHA256_TAG_ENCODER,
     BASELINE_ARTIFACT_DIR,
     CALIBRATOR_ARTIFACT_DIR,
     CHAMPION_TAG_AUPRC,
@@ -425,6 +427,7 @@ def _log_encoder_artifact(encoder: CategoricalEncoder) -> None:
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "encoder.joblib"
         save_encoder(encoder, path)
+        mlflow.set_tag(ARTIFACT_SHA256_TAG_ENCODER, sha256_file(path))
         mlflow.log_artifact(str(path), artifact_path=ENCODER_ARTIFACT_DIR)
 
 
@@ -539,6 +542,7 @@ def _log_calibrator_artifact(result: CalibrationResult) -> None:
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "calibrator.joblib"
         joblib.dump(result.calibrator, path)
+        mlflow.set_tag(ARTIFACT_SHA256_TAG_CALIBRATOR, sha256_file(path))
         mlflow.log_artifact(str(path), artifact_path=CALIBRATOR_ARTIFACT_DIR)
 
 

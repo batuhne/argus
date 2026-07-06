@@ -33,8 +33,13 @@ jobs:
           REASON: ${{ inputs.reason || 'scheduled-ci' }}
         run: |
           if [ -z "${PREFECT_API_URL}" ]; then
-            echo "PREFECT_API_URL not set; nothing to trigger."
-            echo "This workflow drives a reachable Prefect API (the cloud-readiness path)."
+            # Surface the skip as a warning, not a silent green.
+            echo "::warning title=Retrain skipped::PREFECT_API_URL not set; no Prefect API to trigger."
+            {
+              echo "### Retrain skipped"
+              echo "\`PREFECT_API_URL\` is not set, so there was no reachable Prefect API to trigger."
+              echo "Set the secret to drive the cloud retraining deployment."
+            } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           uv run python - <<'PY'

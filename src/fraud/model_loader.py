@@ -17,15 +17,19 @@ import mlflow.xgboost
 from mlflow.exceptions import MlflowException
 
 from fraud.calibrator import IsotonicCalibrator
+from fraud.common.lineage import sha256_file
 from fraud.common.logging import get_logger
 from fraud.config import get_settings
 from fraud.params import load_params
 from fraud.registry import (
+    ARTIFACT_SHA256_TAG_CALIBRATOR,
+    ARTIFACT_SHA256_TAG_ENCODER,
     CALIBRATOR_ARTIFACT_PATH,
     CHAMPION_TAG_FAMILY,
     CHAMPION_TAG_THRESHOLD,
     ENCODER_ARTIFACT_PATH,
     get_alias_version,
+    get_run_tags,
     get_version_run_id,
     get_version_tags,
 )
@@ -71,6 +75,10 @@ class ChampionUnavailableError(RuntimeError):
     """Champion alias or tags not in the registry yet; a cold start may be racing training."""
 
 
+class ArtifactIntegrityError(RuntimeError):
+    """A pickled artifact's hash does not match the value recorded at training time."""
+
+
 def load_champion(cfg: ChampionLoadConfig) -> ModelBundle:
     """Load the champion bundle, retrying a not-yet-ready registry until the deadline."""
     os.environ.setdefault("MLFLOW_HTTP_REQUEST_TIMEOUT", str(cfg.request_timeout_seconds))
@@ -113,8 +121,10 @@ def _load_bundle(cfg: ChampionLoadConfig) -> ModelBundle:
     # Pin the resolved version so the model matches its version-loaded calibrator and encoder.
     model_uri = f"models:/{cfg.model_name}/{version}"
     model = _load_model_by_family(family, model_uri)
-    calibrator = _load_calibrator(cfg.model_name, version)
-    encoder = _load_encoder(cfg.model_name, version)
+    run_id = get_version_run_id(cfg.model_name, version)
+    run_tags = get_run_tags(run_id)
+    calibrator = _load_calibrator(run_id, run_tags)
+    encoder = _load_encoder(run_id, run_tags)
     return ModelBundle(model, calibrator, encoder, threshold, version, family)
 
 
@@ -147,19 +157,38 @@ def _load_model_by_family(family: str, model_uri: str) -> Any:
     raise RuntimeError(f"unsupported champion family {family!r}")
 
 
-def _load_calibrator(model_name: str, version: int) -> IsotonicCalibrator:
-    run_id = get_version_run_id(model_name, version)
+def _load_calibrator(run_id: str, run_tags: dict[str, str]) -> IsotonicCalibrator:
     local_path = mlflow.artifacts.download_artifacts(
         run_id=run_id, artifact_path=CALIBRATOR_ARTIFACT_PATH
     )
-    # Trusted artifact written by our own training run; provenance is the pinned run_id.
+    _verify_artifact_integrity(
+        Path(local_path), run_tags, ARTIFACT_SHA256_TAG_CALIBRATOR, "calibrator"
+    )
     calibrator: IsotonicCalibrator = joblib.load(local_path)
     return calibrator
 
 
-def _load_encoder(model_name: str, version: int) -> CategoricalEncoder:
-    run_id = get_version_run_id(model_name, version)
+def _load_encoder(run_id: str, run_tags: dict[str, str]) -> CategoricalEncoder:
     local_path = mlflow.artifacts.download_artifacts(
         run_id=run_id, artifact_path=ENCODER_ARTIFACT_PATH
     )
+    _verify_artifact_integrity(Path(local_path), run_tags, ARTIFACT_SHA256_TAG_ENCODER, "encoder")
     return load_encoder(Path(local_path))
+
+
+def _verify_artifact_integrity(
+    path: Path, run_tags: dict[str, str], tag_key: str, name: str
+) -> None:
+    # Raises outside the load-retry path so a tampered or unhashed artifact fails fast.
+    expected = run_tags.get(tag_key)
+    if not expected:
+        raise ArtifactIntegrityError(
+            f"champion run has no '{tag_key}' tag; retrain to record the {name} artifact hash "
+            "before it can be loaded"
+        )
+    actual = sha256_file(path)
+    if actual != expected:
+        raise ArtifactIntegrityError(
+            f"{name} artifact hash {actual} does not match the recorded {expected}; "
+            "refusing to unpickle a tampered artifact"
+        )

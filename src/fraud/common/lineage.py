@@ -68,7 +68,11 @@ def _run(args: list[str], cwd: Path) -> str | None:
     return result.stdout.strip() or None
 
 
+def sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def _hash_file(path: Path) -> str | None:
     if not path.is_file():
         return None
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return sha256_file(path)

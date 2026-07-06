@@ -1,6 +1,7 @@
-FROM python:3.11-slim AS builder
+# Bases pinned by digest; re-pin when the Trivy gate flags a new fixable CVE.
+FROM python:3.11-slim@sha256:b27df5841f3355e9473f9a516d38a6783b6c8dfeacaf2d14a240f443b368ddb6 AS builder
 
-COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.11.16@sha256:440fd6477af86a2f1b38080c539f1672cd22acb1b1a47e321dba5158ab08864d /uv /bin/uv
 
 WORKDIR /app
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv \
@@ -13,7 +14,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-default-groups --no-install-project
 
 
-FROM python:3.11-slim AS runtime
+FROM python:3.11-slim@sha256:b27df5841f3355e9473f9a516d38a6783b6c8dfeacaf2d14a240f443b368ddb6 AS runtime
 
 # libgomp1 backs the xgboost/lightgbm/catboost wheels; the pip upgrade clears the base image CVEs.
 RUN apt-get update \

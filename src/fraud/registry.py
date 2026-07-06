@@ -17,6 +17,9 @@ ENCODER_ARTIFACT_DIR = "encoder"
 ENCODER_ARTIFACT_PATH = f"{ENCODER_ARTIFACT_DIR}/encoder.joblib"
 BASELINE_ARTIFACT_DIR = "monitoring"
 BASELINE_ARTIFACT_PATH = f"{BASELINE_ARTIFACT_DIR}/baseline.parquet"
+# Pickled-artifact hashes the loader verifies before unpickling.
+ARTIFACT_SHA256_TAG_CALIBRATOR = "calibrator_sha256"
+ARTIFACT_SHA256_TAG_ENCODER = "encoder_sha256"
 
 
 def attach_alias(model_name: str, version: int, *, alias: str = "candidate") -> None:
@@ -41,6 +44,12 @@ def get_version_tags(model_name: str, version: int) -> dict[str, str]:
     """Return the user tags stored on a registered model version."""
     mv = MlflowClient().get_model_version(model_name, str(version))
     return dict(mv.tags or {})
+
+
+def get_run_tags(run_id: str) -> dict[str, str]:
+    """Return the tags recorded on a run."""
+    run = MlflowClient().get_run(run_id)
+    return dict(run.data.tags or {})
 
 
 def get_version_run_id(model_name: str, version: int) -> str:

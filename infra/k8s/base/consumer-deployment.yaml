@@ -33,6 +33,7 @@ spec:
       containers:
         - name: consumer
           image: argus-app
+          imagePullPolicy: Always
           args:
             - python
             - -m

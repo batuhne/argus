@@ -16,6 +16,7 @@ from typing import Any
 
 import requests
 from confluent_kafka import Consumer, KafkaException, Message, Producer, TopicPartition
+from prometheus_client import Counter, start_http_server
 from pydantic import ValidationError
 
 from fraud.common.logging import configure_logging, get_logger
@@ -51,6 +52,23 @@ SHUTDOWN_POLL_SECONDS = 0.5
 FLUSH_TIMEOUT_SECONDS = 10.0
 # Touched each poll cycle; a k8s exec probe restarts the pod if it goes stale (wedged poll).
 HEARTBEAT_PATH = Path("/tmp/consumer-alive")
+
+PREDICTIONS_PUBLISHED = Counter(
+    "argus_consumer_predictions_total", "Transactions scored and published as predictions"
+)
+DLQ_MESSAGES = Counter("argus_consumer_dlq_total", "Messages dead-lettered, by reason", ["reason"])
+RETRIES_EXHAUSTED = Counter(
+    "argus_consumer_retries_exhausted_total", "Predict calls that exhausted the retry budget"
+)
+PREDICT_THROTTLED = Counter(
+    "argus_consumer_throttled_total", "Predict calls shed by serving with 429"
+)
+PUBLISH_FAILURES = Counter(
+    "argus_consumer_publish_failures_total", "Kafka publishes left unconfirmed, by topic", ["topic"]
+)
+CIRCUIT_OPENED = Counter(
+    "argus_consumer_circuit_open_total", "Times the serving circuit breaker opened"
+)
 
 
 class FetchOutcome(StrEnum):
@@ -96,7 +114,13 @@ def run_consumer(
     session = requests.Session()
     breaker = _CircuitBreaker(CIRCUIT_BREAKER_THRESHOLD, CIRCUIT_COOLDOWN_SECONDS)
     consumer.subscribe([cfg.transactions_topic])
-    log.info("consumer_start", topic=cfg.transactions_topic, predict_url=cfg.predict_url)
+    start_http_server(cfg.metrics_port)
+    log.info(
+        "consumer_start",
+        topic=cfg.transactions_topic,
+        predict_url=cfg.predict_url,
+        metrics_port=cfg.metrics_port,
+    )
     if cfg.predict_api_key is None:
         log.warning("predict_api_key_unset", predict_url=cfg.predict_url)
 
@@ -163,7 +187,10 @@ def _handle_message(
         log.warning("prediction_rejected_to_dlq", transaction_id=event.transaction_id)
         return _commit_to_dlq(message, cfg, producer, consumer, reason="rejected")
     if result.outcome is FetchOutcome.UNAVAILABLE:
+        was_open = breaker.is_open
         breaker.record_failure()
+        if breaker.is_open and not was_open:
+            CIRCUIT_OPENED.inc()
     return False
 
 
@@ -179,6 +206,7 @@ def _commit_prediction(
         return False
     if not _commit_offset(consumer, message):
         return False
+    PREDICTIONS_PUBLISHED.inc()
     log.info(
         "prediction_consumed",
         transaction_id=prediction.transaction_id,
@@ -198,7 +226,10 @@ def _commit_to_dlq(
 ) -> bool:
     if not _to_dlq(producer, cfg, message, reason=reason):
         return False
-    return _commit_offset(consumer, message)
+    if not _commit_offset(consumer, message):
+        return False
+    DLQ_MESSAGES.labels(reason=reason).inc()
+    return True
 
 
 def _commit_offset(consumer: Consumer, message: Message) -> bool:
@@ -252,6 +283,7 @@ def _fetch_prediction(
             return PredictionResult(FetchOutcome.OK, prediction)
         if response.status_code == TOO_MANY_REQUESTS:
             # Serving is up but shedding; honor Retry-After and redeliver, not a breaker failure.
+            PREDICT_THROTTLED.inc()
             log.warning("predict_throttled", attempt=attempt)
             _interruptible_sleep(_shed_delay(response), shutdown)
             return PredictionResult(FetchOutcome.THROTTLED)
@@ -269,6 +301,7 @@ def _fetch_prediction(
         )
         return PredictionResult(FetchOutcome.REJECTED)
 
+    RETRIES_EXHAUSTED.inc()
     log.error("predict_retries_exhausted", transaction_id=event.transaction_id)
     return PredictionResult(FetchOutcome.UNAVAILABLE)
 
@@ -394,11 +427,15 @@ def _produce_confirmed(
         producer.produce(topic, key=key, value=value, headers=headers, on_delivery=_on_delivery)
     except BufferError as exc:
         log.warning("produce_queue_full", topic=topic, error=str(exc))
+        PUBLISH_FAILURES.labels(topic=topic).inc()
         return False
     pending = producer.flush(FLUSH_TIMEOUT_SECONDS)
     if pending:
         log.warning("produce_flush_timeout", topic=topic, pending=pending)
-    return pending == 0 and delivered
+    confirmed = pending == 0 and delivered
+    if not confirmed:
+        PUBLISH_FAILURES.labels(topic=topic).inc()
+    return confirmed
 
 
 def _seek_back(consumer: Consumer, message: Message) -> None:

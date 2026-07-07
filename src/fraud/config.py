@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     # When set, /predict requires this bearer token; unset leaves the endpoint open for local dev.
     serving_api_key: SecretStr | None = None
     monitoring_exporter_port: int = 8000
+    consumer_metrics_port: int = 8001
     # The retrain bridge exposes its dispatch counters here when run as a long-lived service.
     retrain_trigger_metrics_port: int = 8002
     redis_host: str = "localhost"

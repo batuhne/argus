@@ -344,6 +344,8 @@ services:
       SERVING_PREDICT_URL: http://serving:3001/predict
       SERVING_API_KEY: ${SERVING_API_KEY:-argus-local-dev-key}
     command: ["python", "-m", "fraud.ingestion.consumer"]
+    expose:
+      - "8001"
     # The image healthcheck probes serving readiness, which the consumer lacks.
     healthcheck:
       disable: true

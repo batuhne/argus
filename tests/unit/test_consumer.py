@@ -11,7 +11,13 @@ from fraud.common.shutdown import ShutdownFlag
 from fraud.ingestion.consumer import (
     BACKOFF_BASE_SECONDS,
     BACKOFF_MAX_SECONDS,
+    CIRCUIT_OPENED,
+    DLQ_MESSAGES,
     MAX_PREDICT_RETRIES,
+    PREDICT_THROTTLED,
+    PREDICTIONS_PUBLISHED,
+    PUBLISH_FAILURES,
+    RETRIES_EXHAUSTED,
     FetchOutcome,
     _CircuitBreaker,
     _fetch_prediction,
@@ -55,6 +61,15 @@ def _payload() -> bytes:
 
 def _breaker() -> _CircuitBreaker:
     return _CircuitBreaker(threshold=3, cooldown_seconds=10.0)
+
+
+def _counter(metric: Any, **labels: str) -> float:
+    for sample in next(iter(metric.collect())).samples:
+        if sample.name.endswith("_total") and all(
+            sample.labels.get(key) == value for key, value in labels.items()
+        ):
+            return float(sample.value)
+    return 0.0
 
 
 # transaction_id and latency_ms omitted on purpose: optional, and the consumer ignores them.
@@ -510,6 +525,54 @@ def test_handle_message_routes_empty_payload_to_dlq() -> None:
     assert ("reason", b"empty_payload") in headers
 
 
+def test_metrics_count_a_published_prediction() -> None:
+    producer, consumer = _FakeProducer(), _FakeConsumer()
+    session = _FakeSession([_FakeResponse(200, _PREDICT_BODY)])
+    before = _counter(PREDICTIONS_PUBLISHED)
+    _handle(_FakeMessage(_payload()), session, producer, consumer, _breaker())
+    assert _counter(PREDICTIONS_PUBLISHED) == before + 1
+
+
+def test_metrics_count_a_dead_letter_by_reason() -> None:
+    producer, consumer = _FakeProducer(), _FakeConsumer()
+    before = _counter(DLQ_MESSAGES, reason="deserialize_error")
+    _handle(_FakeMessage(b"not-json"), _FakeSession([]), producer, consumer, _breaker())
+    assert _counter(DLQ_MESSAGES, reason="deserialize_error") == before + 1
+
+
+def test_metrics_count_retry_exhaustion() -> None:
+    before = _counter(RETRIES_EXHAUSTED)
+    session = _FakeSession([_FakeResponse(503)] * MAX_PREDICT_RETRIES)
+    _fetch_prediction(_cfg(), session, _event(), ShutdownFlag())  # type: ignore[arg-type]
+    assert _counter(RETRIES_EXHAUSTED) == before + 1
+
+
+def test_metrics_count_a_throttle(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "fraud.ingestion.consumer._interruptible_sleep", lambda _seconds, _shutdown: None
+    )
+    before = _counter(PREDICT_THROTTLED)
+    _fetch_prediction(_cfg(), _FakeSession([_FakeResponse(429)]), _event(), ShutdownFlag())  # type: ignore[arg-type]
+    assert _counter(PREDICT_THROTTLED) == before + 1
+
+
+def test_metrics_count_the_breaker_opening() -> None:
+    producer, consumer = _FakeProducer(), _FakeConsumer()
+    breaker = _CircuitBreaker(threshold=1, cooldown_seconds=1.0)
+    session = _FakeSession([_FakeResponse(200, {"fraud_score": 0.1})])
+    before = _counter(CIRCUIT_OPENED)
+    _handle(_FakeMessage(_payload()), session, producer, consumer, breaker)
+    assert _counter(CIRCUIT_OPENED) == before + 1
+
+
+def test_metrics_count_an_unconfirmed_publish() -> None:
+    producer, consumer = _FakeProducer(deliver=False), _FakeConsumer()
+    session = _FakeSession([_FakeResponse(200, _PREDICT_BODY)])
+    before = _counter(PUBLISH_FAILURES, topic="predictions")
+    _handle(_FakeMessage(_payload()), session, producer, consumer, _breaker())
+    assert _counter(PUBLISH_FAILURES, topic="predictions") == before + 1
+
+
 def test_interruptible_sleep_returns_when_shutdown_requested(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -534,6 +597,7 @@ def test_run_consumer_holds_offset_and_paces_when_serving_down(
     monkeypatch.setattr("fraud.ingestion.consumer._build_consumer", lambda cfg: consumer)
     monkeypatch.setattr("fraud.ingestion.consumer.Producer", lambda cfg: producer)
     monkeypatch.setattr("fraud.ingestion.consumer.requests.Session", lambda: session)
+    monkeypatch.setattr("fraud.ingestion.consumer.start_http_server", lambda _port: None)
     monkeypatch.setattr(
         "fraud.ingestion.consumer._interruptible_sleep",
         lambda seconds, _shutdown: cooldowns.append(seconds),

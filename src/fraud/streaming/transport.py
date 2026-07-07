@@ -27,6 +27,7 @@ class StreamConfig:
     predict_url: str
     # repr-suppressed so a traceback or log that captures the config never leaks the bearer token.
     predict_api_key: str | None = field(default=None, repr=False)
+    metrics_port: int = 8001
 
     @classmethod
     def from_settings(cls) -> StreamConfig:
@@ -40,6 +41,7 @@ class StreamConfig:
             consumer_group=CONSUMER_GROUP,
             predict_url=settings.serving_predict_url,
             predict_api_key=api_key.get_secret_value() if api_key is not None else None,
+            metrics_port=settings.consumer_metrics_port,
         )
 
 

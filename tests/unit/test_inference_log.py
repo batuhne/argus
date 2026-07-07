@@ -1,7 +1,11 @@
 from confluent_kafka import KafkaException
 
-from fraud.serving.inference_log import InferenceLogger
+from fraud.serving.inference_log import INFERENCE_LOG_DROPPED, InferenceLogger
 from fraud.streaming.events import ScoredFeaturesEvent, deserialize_scored_features
+
+
+def _dropped_total() -> float:
+    return next(iter(INFERENCE_LOG_DROPPED.collect())).samples[0].value
 
 
 def _event() -> ScoredFeaturesEvent:
@@ -72,8 +76,10 @@ def test_log_swallows_kafka_exception_without_raising() -> None:
 def test_delivery_error_counts_as_dropped() -> None:
     producer = _FakeProducer(delivery_error="broker rejected")
     logger = InferenceLogger(producer)  # type: ignore[arg-type]
+    before = _dropped_total()
     logger.log(_event())
     assert logger._dropped == 1
+    assert _dropped_total() == before + 1
 
 
 def test_successful_delivery_does_not_count_as_dropped() -> None:

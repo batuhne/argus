@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from confluent_kafka import KafkaException, Producer
+from prometheus_client import Counter
 
 from fraud.common.logging import get_logger
 from fraud.streaming.events import SCORED_FEATURES_TOPIC, ScoredFeaturesEvent, serialize
@@ -10,6 +11,10 @@ from fraud.streaming.events import SCORED_FEATURES_TOPIC, ScoredFeaturesEvent, s
 log = get_logger(__name__)
 
 _DROP_LOG_EVERY = 1000
+
+INFERENCE_LOG_DROPPED = Counter(
+    "argus_inference_log_dropped_total", "Scored-features records dropped before reaching Kafka"
+)
 
 
 class InferenceLogger:
@@ -59,6 +64,7 @@ class InferenceLogger:
 
     def _note_dropped(self) -> None:
         self._dropped += 1
+        INFERENCE_LOG_DROPPED.inc()
         if self._dropped % _DROP_LOG_EVERY == 1:
             log.warning("inference_log_dropped", dropped=self._dropped)
 

@@ -56,6 +56,24 @@ errors) isolate the Redis online-store read inside the request path.
 - If Redis is down, serving readiness fails closed and pods leave the Service (see
   the Redis outage runbook).
 
+## Ingestion health
+
+The consumer exposes counters on its metrics port for the scoring pipeline.
+`IngestionCircuitOpen` fires when the serving breaker trips, `IngestionRetriesExhausted`
+when predict calls burn the full retry budget, `IngestionPublishFailures` when Kafka
+writes go unconfirmed, `IngestionDeadLettering` on a DLQ spike, and
+`ServingInferenceLogDropping` when scored features cannot reach Kafka.
+
+- Circuit open or retries exhausted: serving is slow or down for the consumer. Check
+  the serving error-budget and latency alerts; the consumer holds offsets and resumes
+  once serving recovers, so no transactions are lost.
+- Publish failures: check broker health and the producer queue; unconfirmed writes hold
+  the offset for redelivery rather than advancing past an unwritten prediction.
+- Dead-lettering: inspect `transactions-dlq`; a spike is usually a producer schema break
+  or a serving contract shift rejecting valid-looking payloads.
+- Inference log dropping: scoring is healthy but drift and AUPRC will degrade; check the
+  broker reachability from serving. The drop is deliberate so predict never blocks.
+
 ## Feature drift detected
 
 `FeatureDriftDetected` fires when any model-input feature PSI exceeds 0.2 versus

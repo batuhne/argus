@@ -24,6 +24,14 @@ scrape_configs:
     static_configs:
       - targets: ["monitoring:8000"]
 
+  # The consumer is scaled, so resolve every replica's A record instead of a single VIP; each
+  # exposes its own counters and a static target would scrape a different one each interval.
+  - job_name: argus-consumer
+    dns_sd_configs:
+      - names: ["consumer"]
+        type: A
+        port: 8001
+
   # The retrain bridge runs on the host (it needs the Prefect client, which the slim image omits),
   # so it is reached over the Docker host gateway. Down until `make retrain-trigger` is running.
   - job_name: argus-retrain-trigger

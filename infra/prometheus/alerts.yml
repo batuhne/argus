@@ -177,6 +177,67 @@ groups:
           description: "Transient reload failures over the last hour suggest the registry is unreachable; serving may be running a stale champion."
           runbook_url: "https://github.com/batuhne/argus/blob/main/docs/runbooks.md#champion-reload-rejected"
 
+  - name: ingestion_health
+    rules:
+      # The consumer holds offsets when serving is unreachable, so a burned retry budget is the
+      # first sign the scoring path is stalling, before the breaker even trips.
+      - alert: IngestionRetriesExhausted
+        expr: increase(argus_consumer_retries_exhausted_total[10m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: consumer
+        annotations:
+          summary: "Consumer is exhausting predict retries"
+          description: "Predict calls are burning the full retry budget; serving is slow or unavailable to the consumer."
+          runbook_url: "https://github.com/batuhne/argus/blob/main/docs/runbooks.md#ingestion-health"
+
+      - alert: IngestionCircuitOpen
+        expr: increase(argus_consumer_circuit_open_total[10m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: consumer
+        annotations:
+          summary: "Consumer circuit breaker opened"
+          description: "The serving breaker tripped; scoring is paused and transactions are held for redelivery."
+          runbook_url: "https://github.com/batuhne/argus/blob/main/docs/runbooks.md#ingestion-health"
+
+      - alert: IngestionPublishFailures
+        expr: increase(argus_consumer_publish_failures_total[10m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: consumer
+        annotations:
+          summary: "Consumer Kafka publishes are failing"
+          description: "Predictions or dead-letters are going unconfirmed; check the broker and the producer queue."
+          runbook_url: "https://github.com/batuhne/argus/blob/main/docs/runbooks.md#ingestion-health"
+
+      # A few poison messages are normal; a spike means a producer schema break or a serving contract shift.
+      - alert: IngestionDeadLettering
+        expr: increase(argus_consumer_dlq_total[15m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+          service: consumer
+        annotations:
+          summary: "Consumer is dead-lettering messages"
+          description: "Over 10 messages hit the DLQ in 15m; check the producer schema and serving rejects."
+          runbook_url: "https://github.com/batuhne/argus/blob/main/docs/runbooks.md#ingestion-health"
+
+      # Scored features feed drift and AUPRC, so a sustained drop blinds monitoring while serving stays green.
+      - alert: ServingInferenceLogDropping
+        expr: increase(argus_inference_log_dropped_total[15m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: serving
+        annotations:
+          summary: "Serving is dropping scored-features records"
+          description: "The inference log cannot reach Kafka; drift and AUPRC monitoring degrade while scoring stays healthy."
+          runbook_url: "https://github.com/batuhne/argus/blob/main/docs/runbooks.md#ingestion-health"
+
   - name: monitor_health
     rules:
       # for:5m clears the monitor's own deploy gap: it is single-replica with a Recreate strategy

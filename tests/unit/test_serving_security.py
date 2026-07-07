@@ -200,26 +200,23 @@ def test_rate_limiter_caps_the_identity_table_under_a_flood() -> None:
     assert "client-0" not in limiter._buckets
 
 
-def test_client_identity_prefers_hashed_bearer_over_ip() -> None:
-    scope: Scope = {
-        "type": "http",
-        "headers": [(b"authorization", b"Bearer secret")],
-        "client": ("1.2.3.4", 5),
-    }
-
-    identity = client_identity(scope)
-
-    assert identity.startswith("key:")
-    assert "secret" not in identity
-
-
-def test_client_identity_falls_back_to_ip_without_a_token() -> None:
+def test_client_identity_is_the_source_ip() -> None:
     scope: Scope = {"type": "http", "headers": [], "client": ("1.2.3.4", 5)}
 
     assert client_identity(scope) == "ip:1.2.3.4"
 
 
-async def _drive_rate_limit(middleware: RateLimitMiddleware, path: str = "/predict") -> int:
+def test_client_identity_is_unknown_without_a_client() -> None:
+    assert client_identity({"type": "http", "headers": []}) == "ip:unknown"
+
+
+async def _drive_rate_limit(
+    middleware: RateLimitMiddleware,
+    path: str = "/predict",
+    *,
+    ip: str = "1.2.3.4",
+    authorization: str | None = None,
+) -> int:
     async def receive() -> Message:
         return {"type": "http.request", "body": b"", "more_body": False}
 
@@ -228,7 +225,8 @@ async def _drive_rate_limit(middleware: RateLimitMiddleware, path: str = "/predi
     async def send(message: Message) -> None:
         sent.append(message)
 
-    scope: Scope = {"type": "http", "path": path, "headers": [], "client": ("1.2.3.4", 1)}
+    headers = [(b"authorization", authorization.encode())] if authorization is not None else []
+    scope: Scope = {"type": "http", "path": path, "headers": headers, "client": (ip, 1)}
     await middleware(scope, receive, send)
     return int(next(m["status"] for m in sent if m["type"] == "http.response.start"))
 
@@ -243,6 +241,30 @@ def test_rate_limit_middleware_sheds_a_client_over_its_limit() -> None:
 
     assert first == 200
     assert second == 429
+
+
+def test_rate_limit_middleware_exempts_the_verified_internal_key() -> None:
+    app = _SpyApp()
+    limiter = RateLimiter(capacity=1, refill_per_second=0.001, clock=lambda: 0.0)
+    middleware = RateLimitMiddleware(app, limiter=limiter, expected_key="secret")
+
+    statuses = [
+        asyncio.run(_drive_rate_limit(middleware, authorization="Bearer secret")) for _ in range(5)
+    ]
+
+    assert statuses == [200, 200, 200, 200, 200]
+
+
+def test_rate_limit_middleware_buckets_a_rotating_token_flood_by_ip() -> None:
+    app = _SpyApp()
+    limiter = RateLimiter(capacity=1, refill_per_second=0.001, clock=lambda: 0.0)
+    middleware = RateLimitMiddleware(app, limiter=limiter, expected_key="secret")
+
+    first = asyncio.run(_drive_rate_limit(middleware, authorization="Bearer forged-1"))
+    second = asyncio.run(_drive_rate_limit(middleware, authorization="Bearer forged-2"))
+
+    assert first == 200
+    assert second == 429  # a fresh token per request no longer buys a fresh bucket
 
 
 @pytest.mark.parametrize("path", ["/livez", "/readyz", "/metrics"])

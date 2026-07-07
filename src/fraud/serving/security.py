@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import hmac
 import math
 import threading
@@ -19,7 +18,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 # Comfortably above a legit predict body (scalars plus the bounded v and categorical maps).
 MAX_REQUEST_BYTES = 64 * 1024
 
-# Caps one caller's sustained rate; max_concurrency only bounds global in-flight, not per-key.
+# Caps one source IP's sustained rate; max_concurrency only bounds global in-flight, not per-IP.
 RATE_LIMIT_CAPACITY = 120
 RATE_LIMIT_REFILL_PER_SECOND = 20.0
 # Cap the identity table so an unauthenticated flood of distinct clients cannot grow it without end.
@@ -94,24 +93,34 @@ class RateLimiter:
 
 
 def client_identity(scope: Scope) -> str:
-    for name, value in scope.get("headers", []):
-        if name == b"authorization":
-            scheme, _, token = value.partition(b" ")
-            if scheme.lower() == b"bearer" and token.strip():
-                return "key:" + hashlib.sha256(token.strip()).hexdigest()[:32]
     client = scope.get("client")
     return f"ip:{client[0]}" if client else "ip:unknown"
 
 
-class RateLimitMiddleware:
-    """Shed a client exceeding its sustained request rate with 429 before the app does work."""
+def _bearer_token(scope: Scope) -> bytes:
+    for name, value in scope.get("headers", []):
+        if name == b"authorization":
+            scheme, _, token = value.partition(b" ")
+            if scheme.lower() == b"bearer":
+                return bytes(token.strip())
+    return b""
 
-    def __init__(self, app: ASGIApp, *, limiter: RateLimiter | None = None) -> None:
+
+class RateLimitMiddleware:
+    """Shed untrusted traffic over its per-IP rate with 429; the verified internal key is exempt."""
+
+    def __init__(
+        self, app: ASGIApp, *, limiter: RateLimiter | None = None, expected_key: str | None = None
+    ) -> None:
         self._app = app
         self._limiter = limiter or RateLimiter()
+        self._expected_key = expected_key.encode("utf-8") if expected_key else None
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http" or scope.get("path") in UNLIMITED_PATHS:
+            await self._app(scope, receive, send)
+            return
+        if self._is_trusted(scope):
             await self._app(scope, receive, send)
             return
         allowed, retry_after = self._limiter.check(client_identity(scope))
@@ -124,6 +133,12 @@ class RateLimitMiddleware:
             await response(scope, receive, send)
             return
         await self._app(scope, receive, send)
+
+    def _is_trusted(self, scope: Scope) -> bool:
+        if self._expected_key is None:
+            return False
+        token = _bearer_token(scope)
+        return bool(token) and hmac.compare_digest(token, self._expected_key)
 
 
 class BodySizeLimitMiddleware:

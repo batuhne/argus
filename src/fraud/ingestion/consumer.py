@@ -57,6 +57,7 @@ class FetchOutcome(StrEnum):
     OK = "ok"
     REJECTED = "rejected"
     UNAVAILABLE = "unavailable"
+    THROTTLED = "throttled"
     ABORTED = "aborted"
 
 
@@ -229,8 +230,8 @@ def _fetch_prediction(
     *,
     max_attempts: int = MAX_PREDICT_RETRIES,
 ) -> PredictionResult:
-    """Bounded retries: 5xx is retried, 429 honors Retry-After and yields to the breaker, 401/403
-    holds, and any other 4xx is a permanent reject."""
+    """Bounded retries: 5xx is retried, 429 is backpressure (honor Retry-After, redeliver without
+    tripping the breaker), 401/403 holds, and any other 4xx is a permanent reject."""
     body = predict_request_body(event)
     headers = _auth_headers(cfg)
     for attempt in range(1, max_attempts + 1):
@@ -250,11 +251,10 @@ def _fetch_prediction(
                 return PredictionResult(FetchOutcome.UNAVAILABLE)
             return PredictionResult(FetchOutcome.OK, prediction)
         if response.status_code == TOO_MANY_REQUESTS:
-            # Shedding: honor Retry-After and let the breaker open now instead of burning the
-            # whole retry budget per message, which would only pile more load on the server.
+            # Serving is up but shedding; honor Retry-After and redeliver, not a breaker failure.
             log.warning("predict_throttled", attempt=attempt)
             _interruptible_sleep(_shed_delay(response), shutdown)
-            return PredictionResult(FetchOutcome.UNAVAILABLE)
+            return PredictionResult(FetchOutcome.THROTTLED)
         if _is_retryable_status(response.status_code):
             log.warning("predict_unavailable", status=response.status_code, attempt=attempt)
             _backoff(attempt, shutdown)

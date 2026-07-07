@@ -253,7 +253,7 @@ def test_fetch_prediction_retries_then_succeeds_on_transient_error() -> None:
     assert session.calls == 2
 
 
-def test_fetch_prediction_yields_to_breaker_on_too_many_requests(
+def test_fetch_prediction_throttles_on_too_many_requests(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     delays: list[float] = []
@@ -263,8 +263,8 @@ def test_fetch_prediction_yields_to_breaker_on_too_many_requests(
     )
     session = _FakeSession([_FakeResponse(429, headers={"Retry-After": "2"})])
     result = _fetch_prediction(_cfg(), session, _event(), ShutdownFlag())  # type: ignore[arg-type]
-    assert result.outcome is FetchOutcome.UNAVAILABLE
-    assert session.calls == 1  # one shot, then yield to the breaker; no per-message retry storm
+    assert result.outcome is FetchOutcome.THROTTLED
+    assert session.calls == 1  # one shot, honor Retry-After, redeliver; no per-message retry storm
     assert delays == [2.0]  # honored Retry-After
 
 
@@ -397,7 +397,9 @@ def test_handle_message_routes_rejected_to_dlq_and_commits() -> None:
     assert ("reason", b"rejected") in producer.produced[0][2]
 
 
-def test_handle_message_counts_throttle_toward_breaker(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_handle_message_does_not_count_throttle_toward_breaker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(
         "fraud.ingestion.consumer._interruptible_sleep", lambda _seconds, _shutdown: None
     )
@@ -407,7 +409,7 @@ def test_handle_message_counts_throttle_toward_breaker(monkeypatch: pytest.Monke
     committed = _handle(_FakeMessage(_payload()), session, producer, consumer, breaker)
     assert committed is False  # held, not committed
     assert producer.produced == []  # not dead-lettered
-    assert breaker.failures == 1  # a single 429 counts toward the breaker
+    assert breaker.failures == 0  # backpressure, not an outage, so the breaker stays armed
     assert session.calls == 1
 
 

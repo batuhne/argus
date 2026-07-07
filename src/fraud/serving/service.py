@@ -185,5 +185,10 @@ class FraudService:
         return ready
 
 
-FraudService.add_asgi_middleware(RateLimitMiddleware)  # type: ignore[attr-defined]
+def _serving_api_key_value() -> str | None:
+    key = get_settings().serving_api_key
+    return key.get_secret_value() if key is not None else None
+
+
+FraudService.add_asgi_middleware(RateLimitMiddleware, expected_key=_serving_api_key_value())  # type: ignore[attr-defined]
 FraudService.add_asgi_middleware(BodySizeLimitMiddleware, max_bytes=MAX_REQUEST_BYTES)  # type: ignore[attr-defined]

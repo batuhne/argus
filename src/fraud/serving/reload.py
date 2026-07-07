@@ -5,12 +5,20 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 
+from prometheus_client import Counter
+
 from fraud.common.logging import get_logger
-from fraud.model_loader import ModelBundle
+from fraud.model_loader import ArtifactIntegrityError, FeatureContractError, ModelBundle
 
 log = get_logger(__name__)
 
 _STOP_JOIN_TIMEOUT_SECONDS = 5.0
+
+CHAMPION_RELOAD_FAILURES = Counter(
+    "argus_champion_reload_failures_total",
+    "Champion hot-reload attempts that failed, by reason",
+    ["reason"],
+)
 
 
 class ChampionReloader:
@@ -52,7 +60,14 @@ class ChampionReloader:
             self._apply(bundle)
             log.info("champion_reloaded", version=bundle.version, family=bundle.family)
             return True
+        except (ArtifactIntegrityError, FeatureContractError) as exc:
+            # A rejected promotion is a bad artifact, not a transient blip: page, don't just warn.
+            reason = "integrity" if isinstance(exc, ArtifactIntegrityError) else "contract"
+            CHAMPION_RELOAD_FAILURES.labels(reason=reason).inc()
+            log.error("champion_reload_rejected", reason=reason, error=str(exc), exc_info=True)
+            return False
         except Exception as exc:
+            CHAMPION_RELOAD_FAILURES.labels(reason="transient").inc()
             log.warning("champion_reload_failed", error=str(exc), exc_info=True)
             return False
 

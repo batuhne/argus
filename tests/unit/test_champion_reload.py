@@ -1,4 +1,14 @@
-from fraud.serving.reload import ChampionReloader
+from structlog.testing import capture_logs
+
+from fraud.model_loader import ArtifactIntegrityError, FeatureContractError
+from fraud.serving.reload import CHAMPION_RELOAD_FAILURES, ChampionReloader
+
+
+def _reload_failures(reason: str) -> float:
+    for sample in next(iter(CHAMPION_RELOAD_FAILURES.collect())).samples:
+        if sample.name.endswith("_total") and sample.labels.get("reason") == reason:
+            return float(sample.value)
+    return 0.0
 
 
 class _Bundle:
@@ -54,8 +64,39 @@ def test_reload_once_survives_a_loader_failure() -> None:
         raise RuntimeError("mlflow unreachable")
 
     reloader = _reloader(load=boom)
+    before = _reload_failures("transient")
+
+    with capture_logs() as logs:
+        assert reloader.reload_once() is False
+
+    assert _reload_failures("transient") == before + 1
+    assert [e["log_level"] for e in logs if e["event"] == "champion_reload_failed"] == ["warning"]
+
+
+def test_reload_once_rejects_a_bad_promotion_loudly() -> None:
+    def bad() -> _Bundle:
+        raise ArtifactIntegrityError("calibrator hash mismatch")
+
+    reloader = _reloader(load=bad)
+    before = _reload_failures("integrity")
+
+    with capture_logs() as logs:
+        assert reloader.reload_once() is False
+
+    assert _reload_failures("integrity") == before + 1
+    rejected = [e for e in logs if e["event"] == "champion_reload_rejected"]
+    assert rejected and rejected[0]["log_level"] == "error"
+
+
+def test_reload_once_flags_a_feature_contract_rejection() -> None:
+    def bad() -> _Bundle:
+        raise FeatureContractError("champion feature set does not match")
+
+    reloader = _reloader(load=bad)
+    before = _reload_failures("contract")
 
     assert reloader.reload_once() is False
+    assert _reload_failures("contract") == before + 1
 
 
 def test_start_does_not_spawn_a_thread_when_disabled() -> None:

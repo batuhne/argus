@@ -151,6 +151,32 @@ groups:
           description: "Concept drift or performance decay on labeled predictions."
           runbook_url: "https://github.com/batuhne/argus/blob/main/docs/runbooks.md#model-performance-decay"
 
+      # The hot-reloader once swallowed a rejected promotion as a warning and kept serving the
+      # old champion, so a bad artifact reaching the registry had no signal but this counter.
+      - alert: ChampionReloadRejected
+        expr: increase(argus_champion_reload_failures_total{reason=~"integrity|contract"}[15m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: serving
+        annotations:
+          summary: "Champion hot-reload rejected a promoted model"
+          description: "A promoted champion failed the artifact-integrity or feature-contract check; serving held the previous version. Investigate the promotion."
+          runbook_url: "https://github.com/batuhne/argus/blob/main/docs/runbooks.md#champion-reload-rejected"
+
+      # Sustained transient failures mean the replica cannot reach the registry to pick up a
+      # promotion, so it silently drifts onto a stale champion.
+      - alert: ChampionReloadStalled
+        expr: increase(argus_champion_reload_failures_total{reason="transient"}[1h]) > 5
+        for: 10m
+        labels:
+          severity: warning
+          service: serving
+        annotations:
+          summary: "Champion hot-reload is persistently failing"
+          description: "Transient reload failures over the last hour suggest the registry is unreachable; serving may be running a stale champion."
+          runbook_url: "https://github.com/batuhne/argus/blob/main/docs/runbooks.md#champion-reload-rejected"
+
   - name: monitor_health
     rules:
       # for:5m clears the monitor's own deploy gap: it is single-replica with a Recreate strategy

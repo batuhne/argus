@@ -165,7 +165,11 @@ def _load_model_by_family(family: str, model_uri: str) -> Any:
 
 def _verify_feature_contract(family: str, model: Any) -> None:
     names = _model_feature_names(family, model)
-    if names and set(names) != set(FEATURE_COLUMNS):
+    if not names:
+        raise FeatureContractError(
+            f"champion ({family}) exposes no feature names to check against the serving contract"
+        )
+    if set(names) != set(FEATURE_COLUMNS):
         missing = sorted(set(FEATURE_COLUMNS) - set(names))
         extra = sorted(set(names) - set(FEATURE_COLUMNS))
         raise FeatureContractError(

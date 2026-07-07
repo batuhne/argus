@@ -184,5 +184,6 @@ def test_feature_contract_rejects_a_mismatched_model() -> None:
         _verify_feature_contract("lightgbm", _NamedModel([*FEATURE_COLUMNS, "stowaway"]))
 
 
-def test_feature_contract_skips_when_names_are_absent() -> None:
-    _verify_feature_contract("lightgbm", _NamedModel([]))
+def test_feature_contract_rejects_when_names_are_absent() -> None:
+    with pytest.raises(FeatureContractError, match="no feature names"):
+        _verify_feature_contract("lightgbm", _NamedModel([]))

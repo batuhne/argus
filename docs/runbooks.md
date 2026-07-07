@@ -77,6 +77,23 @@ enough matched labels to be meaningful.
 - A real drop is concept drift; a retrain should fire. Verify the gate decision
   (promote or keep-champion) in MLflow.
 
+## Champion reload rejected
+
+`ChampionReloadRejected` fires when the serving hot-reloader refuses a promoted
+champion because it fails the artifact-integrity hash or the feature contract.
+Serving keeps running the previous version, so scoring continues while the bad
+promotion is investigated. `ChampionReloadStalled` fires when transient reload
+failures persist, meaning a replica cannot reach the registry and may be serving a
+stale champion.
+
+- Rejected: find the promoted version in MLflow; an integrity failure means the
+  pickled calibrator or encoder does not match its recorded hash (a tampered or
+  re-written artifact), and a contract failure means the model's feature set drifted
+  from the serving columns. Re-run training or roll the alias back to a known-good
+  version.
+- Stalled: check registry reachability from the serving pod; once the registry
+  recovers the next poll hot-swaps without a restart.
+
 ## Monitor exporter down or stalled
 
 `MonitorExporterDown` fires when the monitoring target is unscrapable.

@@ -26,6 +26,7 @@ class MonitoringConfig:
     tracking_uri: str
     model_name: str
     champion_alias: str
+    baseline_load_deadline_seconds: float
     cost_matrix: CostMatrix
     psi_threshold: float
     psi_top_n: int
@@ -56,6 +57,7 @@ class MonitoringConfig:
             tracking_uri=settings.mlflow_tracking_uri,
             model_name=settings.argus_model_name,
             champion_alias=evaluation.champion_alias,
+            baseline_load_deadline_seconds=settings.model_load_deadline_seconds,
             cost_matrix=CostMatrix(fn_cost_usd=cost.fn_cost_usd, fp_cost_usd=cost.fp_cost_usd),
             psi_threshold=monitoring.psi_threshold,
             psi_top_n=monitoring.psi_top_n,

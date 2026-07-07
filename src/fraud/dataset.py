@@ -106,22 +106,20 @@ def build_eval_frame(
     repo_dir: Path = FEATURE_REPO_DIR,
     processed_dir: Path = PROCESSED_DIR,
 ) -> pd.DataFrame:
-    """Build a labeled split through the shared join path and encode it with a fitted encoder.
-
-    Transform only, no refit, so no label from the evaluated rows leaks into its own features.
-    """
+    """Build a labeled split and encode it with a fitted encoder (transform only, no refit)."""
     frame = build_training_frame(split, repo_dir, processed_dir)
+    return encode_frame(frame, encoder)
+
+
+def encode_frame(frame: pd.DataFrame, encoder: CategoricalEncoder) -> pd.DataFrame:
+    """Attach the encoder's full-train columns to a raw frame; transform only, no refit."""
     return _attach_encoded(frame, encoder.transform(frame))
 
 
 def add_encoded_categoricals(
     frames: dict[str, pd.DataFrame], *, seed: int, smoothing: float, n_splits: int
 ) -> CategoricalEncoder:
-    """Fit the encoder on train and replace each split in the dict with its encoded frame.
-
-    Train rows get leak-free out-of-fold target values; val and test use the full-train
-    maps. The returned encoder holds those full-train maps, so serving encodes identically.
-    """
+    """Fit the encoder on train and encode every split in place; train is out-of-fold."""
     encoder, train_encoded = fit_transform_oof(
         frames["train"],
         fl.CATEGORICAL_COLUMNS,

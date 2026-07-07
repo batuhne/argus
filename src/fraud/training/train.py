@@ -23,7 +23,7 @@ from fraud.common.lineage import collect_lineage, sha256_file
 from fraud.common.logging import configure_logging, get_logger
 from fraud.common.seed import set_seed
 from fraud.config import get_settings
-from fraud.dataset import add_encoded_categoricals, load_splits
+from fraud.dataset import add_encoded_categoricals, encode_frame, load_splits
 from fraud.evaluation.business import CostMatrix, expected_cost
 from fraud.evaluation.calibration import (
     CalibrationResult,
@@ -172,18 +172,21 @@ class TrainingResult:
 
 def run_training(cfg: TrainingConfig) -> TrainingResult:
     log.info("loading_splits", repo_dir=str(cfg.repo_dir), processed_dir=str(cfg.processed_dir))
-    splits, encoder = _load_and_split(cfg)
+    splits, encoder, baseline_features = _load_and_split(cfg)
     log.info(
         "splits_loaded",
         train_rows=len(splits["train"][1]),
         val_rows=len(splits["val"][1]),
         test_rows=len(splits["test"][1]),
     )
-    return train_with_splits(cfg, splits, encoder)
+    return train_with_splits(cfg, splits, encoder, baseline_features)
 
 
 def train_with_splits(
-    cfg: TrainingConfig, splits: Splits, encoder: CategoricalEncoder
+    cfg: TrainingConfig,
+    splits: Splits,
+    encoder: CategoricalEncoder,
+    baseline_features: pd.DataFrame,
 ) -> TrainingResult:
     _seed_everything(cfg.seed)
     _configure_mlflow(cfg)
@@ -193,7 +196,7 @@ def train_with_splits(
         _log_run_constraints(cfg)
         best = _sweep_xgb(splits, cfg)
         primary = _train_and_pick_primary(best, splits, cfg)
-        version = _log_artifacts(primary, splits, cfg, encoder)
+        version = _log_artifacts(primary, splits, cfg, encoder, baseline_features)
         attach_alias(cfg.model_name, version, alias=cfg.candidate_alias)
         mlflow.set_tag("model_version", str(version))
         prior_champion = get_alias_version(cfg.model_name, cfg.champion_alias)
@@ -255,15 +258,19 @@ def _configure_mlflow(cfg: TrainingConfig) -> None:
     mlflow.set_experiment(cfg.experiment_name)
 
 
-def _load_and_split(cfg: TrainingConfig) -> tuple[Splits, CategoricalEncoder]:
+def _load_and_split(cfg: TrainingConfig) -> tuple[Splits, CategoricalEncoder, pd.DataFrame]:
     frames = load_splits(cfg.repo_dir, cfg.processed_dir)
+    train_raw = frames["train"]
     encoder = add_encoded_categoricals(
         frames,
         seed=cfg.seed,
         smoothing=cfg.encoder_smoothing,
         n_splits=cfg.encoder_n_splits,
     )
-    return {split: build_xy(frame) for split, frame in frames.items()}, encoder
+    splits = {split: build_xy(frame) for split, frame in frames.items()}
+    # The drift baseline must match serving's full-train transform, not the leak-free OOF matrix.
+    baseline_features, _ = build_xy(encode_frame(train_raw, encoder))
+    return splits, encoder, baseline_features
 
 
 def _log_lineage_tags(splits: Splits) -> None:
@@ -401,7 +408,11 @@ def _log_family_metrics(result: ModelResult) -> None:
 
 
 def _log_artifacts(
-    primary: ModelResult, splits: Splits, cfg: TrainingConfig, encoder: CategoricalEncoder
+    primary: ModelResult,
+    splits: Splits,
+    cfg: TrainingConfig,
+    encoder: CategoricalEncoder,
+    baseline_features: pd.DataFrame,
 ) -> int:
     x_train, _ = splits["train"]
     x_val, y_val = splits["val"]
@@ -416,7 +427,7 @@ def _log_artifacts(
     mlflow.log_figure(shap_figure, "shap_summary_train.png")
 
     mlflow.log_dict(feature_schema_payload(x_train), "feature_schema.json")
-    _log_baseline_artifact(x_train, cfg.seed)
+    _log_baseline_artifact(baseline_features, cfg.seed)
     _log_encoder_artifact(encoder)
     return _log_and_register_model(
         primary, input_example=x_train.head(5), model_name=cfg.model_name

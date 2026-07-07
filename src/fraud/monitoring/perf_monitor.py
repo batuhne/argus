@@ -17,6 +17,9 @@ DEFAULT_RETENTION_SECONDS = 1800.0
 # Hard ceiling on tracked ids: retention eviction is the primary bound, but a stalled event
 # clock never advances the cutoff, so this backstops memory against unbounded growth.
 DEFAULT_MAX_TRACKED_IDS = 200_000
+# _resolved is the dedup guard and must span the full retention window; the smaller pending cap
+# would evict resolved ids early at high throughput and reopen the double-count window.
+DEFAULT_MAX_RESOLVED_IDS = 1_000_000
 
 _V = TypeVar("_V")
 
@@ -30,6 +33,7 @@ class RollingPerformance:
     window_size: int = DEFAULT_WINDOW_SIZE
     retention_seconds: float = DEFAULT_RETENTION_SECONDS
     max_tracked_ids: int = DEFAULT_MAX_TRACKED_IDS
+    max_resolved_ids: int = DEFAULT_MAX_RESOLVED_IDS
     _pending: OrderedDict[str, tuple[float, bool, float]] = field(init=False)
     _early_labels: OrderedDict[str, tuple[int, float]] = field(init=False)
     _resolved: OrderedDict[str, float] = field(init=False)
@@ -119,7 +123,7 @@ class RollingPerformance:
     ) -> None:
         self._matched.append((fraud_score, label, decision))
         self._resolved[transaction_id] = event_time
-        _cap(self._resolved, self.max_tracked_ids)
+        _cap(self._resolved, self.max_resolved_ids)
 
     def _expired(self, event_time: float) -> bool:
         return event_time < self._high_water - self.retention_seconds

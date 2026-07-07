@@ -92,7 +92,7 @@ def test_train_with_splits_bootstraps_champion_on_first_run(
     cfg = _config(tmp_path)
     splits = _make_splits(make_synthetic_split)
 
-    result = train_with_splits(cfg, splits, _stub_encoder())
+    result = train_with_splits(cfg, splits, _stub_encoder(), splits["train"][0])
 
     assert result.model_version == 1
     assert result.champion_version == 1
@@ -121,7 +121,7 @@ def test_gate_blocks_promotion_when_challenger_cost_regresses(
     cfg = _config(tmp_path)
     splits = _make_splits(make_synthetic_split)
 
-    first_run = train_with_splits(cfg, splits, _stub_encoder())
+    first_run = train_with_splits(cfg, splits, _stub_encoder(), splits["train"][0])
 
     fake_champion = GateMetrics(
         auprc=first_run.primary.test_metrics["auprc"] + 0.05,
@@ -138,7 +138,7 @@ def test_gate_blocks_promotion_when_challenger_cost_regresses(
         },
     )
 
-    second_run = train_with_splits(cfg, splits, _stub_encoder())
+    second_run = train_with_splits(cfg, splits, _stub_encoder(), splits["train"][0])
 
     assert second_run.model_version == 2
     assert second_run.champion_version == 1

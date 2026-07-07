@@ -152,3 +152,17 @@ def test_tracked_ids_are_capped_when_the_clock_never_advances() -> None:
     for i in range(10):
         monitor.observe_score(f"t-{i}", 0.5, decision=False, event_time=0.0)
     assert monitor.pending_count <= 3
+
+
+def test_resolved_dedup_survives_a_small_pending_cap() -> None:
+    # The dedup set must span the retention window, so a small pending cap must not evict resolved
+    # ids: a stale redelivery of a long-resolved id still gets deduped rather than double-counted.
+    monitor = _monitor(retention_seconds=1000.0, max_tracked_ids=2)
+    for i in range(10):
+        monitor.observe_score(f"t-{i}", 0.5, decision=False, event_time=0.0)
+        monitor.observe_label(f"t-{i}", 0, event_time=0.0)
+    assert monitor.matched_count == 10
+
+    monitor.observe_score("t-0", 0.5, decision=False, event_time=0.0)
+    monitor.observe_label("t-0", 0, event_time=0.0)
+    assert monitor.matched_count == 10

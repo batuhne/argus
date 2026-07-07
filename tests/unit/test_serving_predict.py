@@ -7,6 +7,7 @@ from sklearn.isotonic import IsotonicRegression
 
 from fraud.calibrator import IsotonicCalibrator
 from fraud.model_loader import ModelBundle
+from fraud.registry import ModelFamily
 from fraud.serving.predict import score_transaction
 from fraud.transforms.encoders import CategoricalEncoder
 
@@ -32,7 +33,7 @@ def _bundle(model: Any, threshold: float) -> ModelBundle:
         encoder=CategoricalEncoder(columns=(), frequency_maps={}, target_maps={}, global_prior=0.0),
         threshold=threshold,
         version=1,
-        family="lightgbm",
+        family=ModelFamily.LIGHTGBM,
     )
 
 

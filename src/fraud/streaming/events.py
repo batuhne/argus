@@ -5,9 +5,10 @@ Plus topic and group name constants, serialization, and payload bounds.
 
 from __future__ import annotations
 
+import math
 from typing import Annotated, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, StringConstraints, field_validator
 
 OptionalFiniteFloat: TypeAlias = FiniteFloat | None
 
@@ -118,7 +119,13 @@ class ScoredFeaturesEvent(BaseModel):
     model_version: int = Field(ge=1)
     fraud_score: float = Field(ge=0.0, le=1.0)
     decision: bool
-    features: dict[str, float | None]  # null marks a missing raw numeric
+    features: dict[str, float | None]  # null marks a missing or non-finite feature
+
+    @field_validator("features", mode="after")
+    @classmethod
+    def _null_non_finite(cls, value: dict[str, float | None]) -> dict[str, float | None]:
+        # inf/NaN can't ride in JSON; store them as null so the log never emits invalid Infinity.
+        return {name: v if v is None or math.isfinite(v) else None for name, v in value.items()}
 
 
 class LabelEvent(BaseModel):

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 import time
-from collections.abc import Hashable, Iterator
+from collections.abc import Callable, Hashable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -124,7 +124,12 @@ def _optional_str(value: Any) -> str | None:
     return None if pd.isna(value) else str(value)
 
 
-def _publish(producer: Producer, topic: str, event: TransactionEvent, on_delivery: Any) -> None:
+def _publish(
+    producer: Producer,
+    topic: str,
+    event: TransactionEvent,
+    on_delivery: Callable[[object, object], None],
+) -> None:
     producer.produce(
         topic,
         key=event.card_id.encode("utf-8"),

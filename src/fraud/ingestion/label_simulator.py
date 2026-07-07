@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -101,7 +101,12 @@ def _label_schedule(
     return sorted(zip(emit_offset.tolist(), events, strict=True), key=lambda item: item[0])
 
 
-def _publish(producer: Producer, topic: str, event: LabelEvent, on_delivery: Any) -> None:
+def _publish(
+    producer: Producer,
+    topic: str,
+    event: LabelEvent,
+    on_delivery: Callable[[object, object], None],
+) -> None:
     producer.produce(
         topic,
         key=event.transaction_id.encode("utf-8"),

@@ -11,6 +11,7 @@ from fraud.evaluation.gate import (
     GateMetrics,
 )
 from fraud.evaluation.threshold import ThresholdDecision
+from fraud.registry import ModelFamily
 from fraud.training.train import GateOutcome, ModelResult, TrainingResult
 
 
@@ -32,7 +33,7 @@ def _result(*, promote: bool, reason: str) -> TrainingResult:
         decision=decision,
     )
     primary = ModelResult(
-        family="xgboost",
+        family=ModelFamily.XGBOOST,
         model=None,
         train_metrics={},
         val_metrics={"auprc": 0.1},

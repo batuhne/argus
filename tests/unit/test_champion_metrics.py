@@ -4,7 +4,7 @@ from typing import Any
 import pytest
 
 from fraud.evaluation.gate import GateMetrics
-from fraud.registry import CHAMPION_TAG_AUPRC, CHAMPION_TAG_COST_PER_TX
+from fraud.registry import CHAMPION_TAG_AUPRC, CHAMPION_TAG_COST_PER_TX, ModelFamily
 from fraud.training import train
 
 
@@ -65,7 +65,7 @@ def test_promote_writes_tags_before_moving_the_alias(monkeypatch: pytest.MonkeyP
             GateMetrics(auprc=0.8, expected_cost_per_tx=1.0),
             _cfg(),
             threshold=0.5,
-            family="xgboost",
+            family=ModelFamily.XGBOOST,
         )
 
     assert aliased == []

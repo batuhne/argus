@@ -180,6 +180,21 @@ def test_scored_features_event_round_trips_missing_feature_as_null() -> None:
     assert restored.features["TransactionAmt"] == 21.0
 
 
+def test_scored_features_event_nulls_non_finite_values() -> None:
+    event = ScoredFeaturesEvent(
+        transaction_id="t-1",
+        model_version=7,
+        fraud_score=0.5,
+        decision=False,
+        features={"ratio": float("inf"), "neg": float("-inf"), "bad": float("nan"), "ok": 1.5},
+    )
+    assert event.features == {"ratio": None, "neg": None, "bad": None, "ok": 1.5}
+    payload = serialize(event)
+    assert b"Infinity" not in payload
+    assert b"NaN" not in payload
+    assert deserialize_scored_features(payload).features["ratio"] is None
+
+
 def test_scored_features_event_rejects_empty_transaction_id() -> None:
     with pytest.raises(ValidationError):
         ScoredFeaturesEvent(

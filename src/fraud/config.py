@@ -3,8 +3,10 @@
 from functools import lru_cache
 from urllib.parse import urlparse
 
-from pydantic import SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+MAX_PORT = 65535
 
 
 class Settings(BaseSettings):
@@ -18,28 +20,28 @@ class Settings(BaseSettings):
     environment: str = "production"
     log_level: str = "INFO"
     log_json: bool = False
-    seed: int = 42
+    seed: int = Field(default=42, ge=0)
 
     mlflow_tracking_uri: str = "http://localhost:5500"
     mlflow_experiment_name: str = "argus"
     argus_model_name: str = "argus_fraud_classifier"
     # Caps a single tracking call so serving startup can't hang on a slow MLflow.
-    mlflow_request_timeout_seconds: int = 15
+    mlflow_request_timeout_seconds: int = Field(default=15, gt=0)
     # How long serving keeps retrying the champion load before it gives up and exits.
-    model_load_deadline_seconds: float = 60.0
+    model_load_deadline_seconds: float = Field(default=60.0, gt=0)
     # How often serving re-checks the champion alias and hot-swaps a promoted model. 0 disables.
-    champion_reload_interval_seconds: float = 60.0
+    champion_reload_interval_seconds: float = Field(default=60.0, ge=0)
     # All three broker ports, so a host client still connects when one broker is down.
     kafka_bootstrap_servers: str = "localhost:19092,localhost:29092,localhost:39092"
     serving_predict_url: str = "http://localhost:3001/predict"
     # When set, /predict requires this bearer token; unset leaves the endpoint open for local dev.
     serving_api_key: SecretStr | None = None
-    monitoring_exporter_port: int = 8000
-    consumer_metrics_port: int = 8001
+    monitoring_exporter_port: int = Field(default=8000, ge=1, le=MAX_PORT)
+    consumer_metrics_port: int = Field(default=8001, ge=1, le=MAX_PORT)
     # The retrain bridge exposes its dispatch counters here when run as a long-lived service.
-    retrain_trigger_metrics_port: int = 8002
+    retrain_trigger_metrics_port: int = Field(default=8002, ge=1, le=MAX_PORT)
     redis_host: str = "localhost"
-    redis_port: int = 6379
+    redis_port: int = Field(default=6379, ge=1, le=MAX_PORT)
 
     kaggle_api_token: SecretStr | None = None
 

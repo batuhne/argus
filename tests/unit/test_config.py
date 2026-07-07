@@ -1,5 +1,7 @@
+from typing import Any
+
 import pytest
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 
 from fraud.config import Settings, get_settings
 
@@ -46,3 +48,37 @@ def test_bootstrap_default_lists_every_broker() -> None:
     brokers = default.split(",")
     assert len(brokers) == 3
     assert all(":" in broker for broker in brokers)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("seed", -1),
+        ("mlflow_request_timeout_seconds", 0),
+        ("model_load_deadline_seconds", 0.0),
+        ("champion_reload_interval_seconds", -1.0),
+        ("monitoring_exporter_port", 0),
+        ("consumer_metrics_port", 70000),
+        ("retrain_trigger_metrics_port", -1),
+        ("redis_port", 0),
+    ],
+)
+def test_out_of_range_settings_are_rejected(field: str, value: Any) -> None:
+    with pytest.raises(ValidationError):
+        Settings(**{field: value})
+
+
+def test_reload_interval_zero_is_allowed_to_disable() -> None:
+    # 0 disables the hot-reload loop, so the bound permits it while still rejecting negatives.
+    assert Settings(champion_reload_interval_seconds=0.0).champion_reload_interval_seconds == 0.0
+
+
+@pytest.mark.parametrize("url", ["http://localhost:3001/predict", "https://serving:3001/predict"])
+def test_serving_predict_url_accepts_http_schemes(url: str) -> None:
+    assert Settings(serving_predict_url=url).serving_predict_url == url
+
+
+@pytest.mark.parametrize("url", ["ftp://serving/predict", "serving:3001/predict", "/predict"])
+def test_serving_predict_url_rejects_non_http_schemes(url: str) -> None:
+    with pytest.raises(ValidationError, match="http"):
+        Settings(serving_predict_url=url)

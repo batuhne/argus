@@ -56,6 +56,7 @@ from fraud.registry import (
     CHAMPION_TAG_FAMILY,
     CHAMPION_TAG_THRESHOLD,
     ENCODER_ARTIFACT_DIR,
+    ModelFamily,
     attach_alias,
     get_alias_version,
     get_version_tags,
@@ -146,7 +147,7 @@ class TrainingConfig:
 
 @dataclass(frozen=True, slots=True)
 class ModelResult:
-    family: str
+    family: ModelFamily
     model: Any
     train_metrics: dict[str, float]
     val_metrics: dict[str, float]
@@ -350,7 +351,7 @@ def _fit_and_evaluate_xgb(
     model = build_xgb(best, scale_pos_weight=scale_pos_weight, seed=cfg.seed)
     model.fit(x_train, y_train, eval_set=[(x_val, y_val)], verbose=False)
     metrics = _evaluate_on_splits(model, splits, cfg.recall_at_k_levels)
-    return ModelResult("xgboost", model, *metrics)
+    return ModelResult(ModelFamily.XGBOOST, model, *metrics)
 
 
 def _fit_and_evaluate_lgb(
@@ -366,7 +367,7 @@ def _fit_and_evaluate_lgb(
         callbacks=[lgb.early_stopping(best.early_stopping_rounds, verbose=False)],
     )
     metrics = _evaluate_on_splits(model, splits, cfg.recall_at_k_levels)
-    return ModelResult("lightgbm", model, *metrics)
+    return ModelResult(ModelFamily.LIGHTGBM, model, *metrics)
 
 
 def _fit_and_evaluate_cat(
@@ -377,7 +378,7 @@ def _fit_and_evaluate_cat(
     model = build_cat(best, scale_pos_weight=scale_pos_weight, seed=cfg.seed)
     model.fit(x_train, y_train, eval_set=(x_val, y_val), verbose=False)
     metrics = _evaluate_on_splits(model, splits, cfg.recall_at_k_levels)
-    return ModelResult("catboost", model, *metrics)
+    return ModelResult(ModelFamily.CATBOOST, model, *metrics)
 
 
 def _evaluate_on_splits(
@@ -454,11 +455,11 @@ def _log_and_register_model(
     return int(info.registered_model_version)
 
 
-def _model_flavor(family: str) -> Any:
+def _model_flavor(family: ModelFamily) -> Any:
     flavors = {
-        "xgboost": mlflow.xgboost,
-        "lightgbm": mlflow.lightgbm,
-        "catboost": mlflow.catboost,
+        ModelFamily.XGBOOST: mlflow.xgboost,
+        ModelFamily.LIGHTGBM: mlflow.lightgbm,
+        ModelFamily.CATBOOST: mlflow.catboost,
     }
     if family not in flavors:
         raise RuntimeError(f"unsupported model family {family!r}")
@@ -625,7 +626,7 @@ def _promote_champion(
     cfg: TrainingConfig,
     *,
     threshold: float,
-    family: str,
+    family: ModelFamily,
 ) -> None:
     # Tags first, alias last: a partial tag write then leaves the old champion whole and servable.
     write_version_tags(

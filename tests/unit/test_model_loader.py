@@ -19,28 +19,45 @@ from fraud.model_loader import (
     _backoff_delay,
     _load_model_by_family,
     _required_threshold,
+    _resolve_family,
     _verify_artifact_integrity,
     _verify_feature_contract,
     load_champion,
 )
-from fraud.registry import ARTIFACT_SHA256_TAG_CALIBRATOR, CHAMPION_TAG_THRESHOLD
+from fraud.registry import (
+    ARTIFACT_SHA256_TAG_CALIBRATOR,
+    CHAMPION_TAG_FAMILY,
+    CHAMPION_TAG_THRESHOLD,
+    ModelFamily,
+)
 from fraud.serving.config import ServingConfig
 from fraud.transforms.features import FEATURE_COLUMNS
 
 
 def test_load_model_by_family_dispatches_to_each_flavor(monkeypatch: pytest.MonkeyPatch) -> None:
-    sentinels = {family: object() for family in ("xgboost", "lightgbm", "catboost")}
-    monkeypatch.setattr(mlflow.xgboost, "load_model", lambda uri: sentinels["xgboost"])
-    monkeypatch.setattr(mlflow.lightgbm, "load_model", lambda uri: sentinels["lightgbm"])
-    monkeypatch.setattr(mlflow.catboost, "load_model", lambda uri: sentinels["catboost"])
+    sentinels = {family: object() for family in ModelFamily}
+    monkeypatch.setattr(mlflow.xgboost, "load_model", lambda uri: sentinels[ModelFamily.XGBOOST])
+    monkeypatch.setattr(mlflow.lightgbm, "load_model", lambda uri: sentinels[ModelFamily.LIGHTGBM])
+    monkeypatch.setattr(mlflow.catboost, "load_model", lambda uri: sentinels[ModelFamily.CATBOOST])
 
     for family, sentinel in sentinels.items():
         assert _load_model_by_family(family, "models:/m@champion") is sentinel
 
 
-def test_load_model_by_family_rejects_unknown_family() -> None:
-    with pytest.raises(RuntimeError, match="unsupported champion family"):
-        _load_model_by_family("randomforest", "models:/m@champion")
+def test_resolve_family_coerces_a_known_tag() -> None:
+    assert _resolve_family({CHAMPION_TAG_FAMILY: "lightgbm"}, 1) is ModelFamily.LIGHTGBM
+
+
+def test_resolve_family_requires_the_tag() -> None:
+    with pytest.raises(ChampionUnavailableError, match="primary_family"):
+        _resolve_family({}, 1)
+
+
+def test_resolve_family_rejects_an_unsupported_tag() -> None:
+    # A registered-but-unloadable family fails fast, not as a retryable cold start.
+    with pytest.raises(RuntimeError, match="unsupported champion family") as exc:
+        _resolve_family({CHAMPION_TAG_FAMILY: "randomforest"}, 1)
+    assert not isinstance(exc.value, ChampionUnavailableError)
 
 
 def test_serving_config_sources_champion_alias_from_params() -> None:
@@ -176,14 +193,14 @@ class _NamedModel:
 
 
 def test_feature_contract_accepts_the_serving_columns() -> None:
-    _verify_feature_contract("lightgbm", _NamedModel(list(FEATURE_COLUMNS)))
+    _verify_feature_contract(ModelFamily.LIGHTGBM, _NamedModel(list(FEATURE_COLUMNS)))
 
 
 def test_feature_contract_rejects_a_mismatched_model() -> None:
     with pytest.raises(FeatureContractError, match="unexpected"):
-        _verify_feature_contract("lightgbm", _NamedModel([*FEATURE_COLUMNS, "stowaway"]))
+        _verify_feature_contract(ModelFamily.LIGHTGBM, _NamedModel([*FEATURE_COLUMNS, "stowaway"]))
 
 
 def test_feature_contract_rejects_when_names_are_absent() -> None:
     with pytest.raises(FeatureContractError, match="no feature names"):
-        _verify_feature_contract("lightgbm", _NamedModel([]))
+        _verify_feature_contract(ModelFamily.LIGHTGBM, _NamedModel([]))

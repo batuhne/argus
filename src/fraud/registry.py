@@ -3,9 +3,19 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from enum import StrEnum
 
 from mlflow import MlflowClient
 from mlflow.exceptions import MlflowException
+
+
+class ModelFamily(StrEnum):
+    """The gradient-boosting families the trainer can fit and the loader can restore."""
+
+    XGBOOST = "xgboost"
+    LIGHTGBM = "lightgbm"
+    CATBOOST = "catboost"
+
 
 CHAMPION_TAG_AUPRC = "test_auprc"
 CHAMPION_TAG_COST_PER_TX = "expected_cost_per_tx_usd"

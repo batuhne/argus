@@ -28,6 +28,7 @@ from fraud.registry import (
     CHAMPION_TAG_FAMILY,
     CHAMPION_TAG_THRESHOLD,
     ENCODER_ARTIFACT_PATH,
+    ModelFamily,
     get_alias_version,
     get_run_tags,
     get_version_run_id,
@@ -69,7 +70,7 @@ class ModelBundle:
     encoder: CategoricalEncoder
     threshold: float
     version: int
-    family: str
+    family: ModelFamily
 
 
 class ChampionUnavailableError(RuntimeError):
@@ -117,11 +118,7 @@ def _load_bundle(cfg: ChampionLoadConfig) -> ModelBundle:
 
     tags = get_version_tags(cfg.model_name, version)
     threshold = _required_threshold(tags, version)
-    family = tags.get(CHAMPION_TAG_FAMILY, "")
-    if not family:
-        raise ChampionUnavailableError(
-            f"champion version {version} has no '{CHAMPION_TAG_FAMILY}' tag yet"
-        )
+    family = _resolve_family(tags, version)
 
     # Pin the resolved version so the model matches its version-loaded calibrator and encoder.
     model_uri = f"models:/{cfg.model_name}/{version}"
@@ -153,17 +150,29 @@ def _required_threshold(tags: dict[str, str], version: int) -> float:
     return value
 
 
-def _load_model_by_family(family: str, model_uri: str) -> Any:
-    if family == "xgboost":
-        return mlflow.xgboost.load_model(model_uri)
-    if family == "lightgbm":
-        return mlflow.lightgbm.load_model(model_uri)
-    if family == "catboost":
-        return mlflow.catboost.load_model(model_uri)
-    raise RuntimeError(f"unsupported champion family {family!r}")
+def _resolve_family(tags: dict[str, str], version: int) -> ModelFamily:
+    raw = tags.get(CHAMPION_TAG_FAMILY, "")
+    if not raw:
+        raise ChampionUnavailableError(
+            f"champion version {version} has no '{CHAMPION_TAG_FAMILY}' tag yet"
+        )
+    try:
+        return ModelFamily(raw)
+    except ValueError as exc:
+        # A registered family the loader can't restore is a bad artifact, not a cold start.
+        raise RuntimeError(f"unsupported champion family {raw!r}") from exc
 
 
-def _verify_feature_contract(family: str, model: Any) -> None:
+def _load_model_by_family(family: ModelFamily, model_uri: str) -> Any:
+    loaders = {
+        ModelFamily.XGBOOST: mlflow.xgboost.load_model,
+        ModelFamily.LIGHTGBM: mlflow.lightgbm.load_model,
+        ModelFamily.CATBOOST: mlflow.catboost.load_model,
+    }
+    return loaders[family](model_uri)
+
+
+def _verify_feature_contract(family: ModelFamily, model: Any) -> None:
     names = _model_feature_names(family, model)
     if not names:
         raise FeatureContractError(
@@ -178,15 +187,13 @@ def _verify_feature_contract(family: str, model: Any) -> None:
         )
 
 
-def _model_feature_names(family: str, model: Any) -> tuple[str, ...]:
-    if family == "xgboost":
+def _model_feature_names(family: ModelFamily, model: Any) -> tuple[str, ...]:
+    if family is ModelFamily.XGBOOST:
         names = model.get_booster().feature_names
-    elif family == "lightgbm":
+    elif family is ModelFamily.LIGHTGBM:
         names = model.feature_name_
-    elif family == "catboost":
-        names = model.feature_names_
     else:
-        names = None
+        names = model.feature_names_  # catboost
     return tuple(names) if names else ()
 
 

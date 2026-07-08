@@ -1,5 +1,5 @@
-# Keep the build context small and free of secrets. The image copies only
-# pyproject.toml, uv.lock, src, params.yaml, and feature_repo/v_selected.json.
+# Keep the build context small and free of secrets. The image copies pyproject.toml, uv.lock,
+# src, params.yaml, and the Feast repo config + registry; the offline parquet stays out.
 .git
 .github
 .dockerignore
@@ -21,7 +21,7 @@ mlruns/
 mlartifacts/
 artifacts/
 dvcstore/
-feature_repo/data/
+feature_repo/data/*.parquet
 *.parquet
 *.pkl
 *.joblib

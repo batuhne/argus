@@ -27,8 +27,11 @@ WORKDIR /app
 COPY --from=builder --chown=1000:1000 /app/.venv /app/.venv
 COPY --chown=1000:1000 src ./src
 COPY --chown=1000:1000 params.yaml ./
-# feature_logic reads the frozen V set at import; k8s has no feature_repo mount.
+# feature_logic reads the frozen V set and serving opens Feast here at startup; k8s has no mount,
+# so bake the config and registry (the offline parquet stays out; online reads hit Redis).
 COPY --chown=1000:1000 feature_repo/v_selected.json ./feature_repo/v_selected.json
+COPY --chown=1000:1000 feature_repo/feature_store.yaml ./feature_repo/feature_store.yaml
+COPY --chown=1000:1000 feature_repo/data/registry.db ./feature_repo/data/registry.db
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONPATH=/app/src \

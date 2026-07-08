@@ -15,6 +15,10 @@ spec:
       labels:
         app: argus-consumer
         argus.io/app: consumer
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8001"
+        prometheus.io/path: "/metrics"
     spec:
       serviceAccountName: argus-consumer
       securityContext:
@@ -33,11 +37,14 @@ spec:
       containers:
         - name: consumer
           image: argus-app
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           args:
             - python
             - -m
             - fraud.ingestion.consumer
+          ports:
+            - name: metrics
+              containerPort: 8001
           envFrom:
             - configMapRef:
                 name: argus-serving-env

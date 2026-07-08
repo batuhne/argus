@@ -19,8 +19,9 @@ resources:
   - pdb.yaml
   - networkpolicy.yaml
 
-# The registry path lives here; overlays override only the tag for their candidate.
+# Overlays override the ref for their candidate. CI pins the built digest (kustomize edit set
+# image); the placeholder below is replaced at deploy, so pods run IfNotPresent, never Always.
 images:
   - name: argus-app
     newName: ghcr.io/batuhne/argus
-    newTag: stable
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000

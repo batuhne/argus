@@ -14,6 +14,10 @@ spec:
       labels:
         app: argus-serving
         argus.io/app: serving
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3001"
+        prometheus.io/path: "/metrics"
     spec:
       serviceAccountName: argus-serving
       # preStop sleeps long enough for the endpoints controller to pull this pod before SIGTERM,
@@ -26,8 +30,8 @@ spec:
         fsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
-      # Spread replicas across nodes so one node loss cannot take serving to zero. Soft, so a
-      # single-node cluster still schedules.
+      # Prefer spreading replicas across nodes, but soft (ScheduleAnyway): best-effort, not a
+      # guarantee, so both can still co-locate and a single-node cluster still schedules.
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname
@@ -38,8 +42,8 @@ spec:
       containers:
         - name: serving
           image: argus-app
-          # stable/candidate are moving tags; re-pull so a node cannot run a stale digest.
-          imagePullPolicy: Always
+          # Kustomization pins argus-app by digest, so the ref is immutable and never needs re-pull.
+          imagePullPolicy: IfNotPresent
           args:
             - bentoml
             - serve

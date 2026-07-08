@@ -38,6 +38,16 @@ spec:
       ports:
         - protocol: TCP
           port: 3001
+    # A cluster Prometheus (assumed in the monitoring namespace) scrapes /metrics on this same
+    # predict port; the source is scoped here so predict is not opened cluster-wide, and predict
+    # stays bearer-gated regardless.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 3001
   egress:
     - ports:
         - protocol: UDP
@@ -63,7 +73,12 @@ spec:
     matchLabels:
       argus.io/app: consumer
   policyTypes: ["Ingress", "Egress"]
-  # Egress only; listing Ingress with no rules denies all inbound.
+  ingress:
+    # A cluster Prometheus scrapes the metrics port (nothing else is inbound); open in-cluster,
+    # tighten under a policy-enforcing CNI.
+    - ports:
+        - protocol: TCP
+          port: 8001
   egress:
     - ports:
         - protocol: UDP

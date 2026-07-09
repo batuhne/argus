@@ -32,9 +32,11 @@ infra/k8s/**/*secret.env
 /dvcstore/
 
 # Feast
-feature_repo/data/
+feature_repo/data/*
 feature_repo/.ipynb_checkpoints/
 *.db
+# registry.db is a small generated artifact baked into the serving image; card_features stays out.
+!feature_repo/data/registry.db
 
 # Notebooks
 .ipynb_checkpoints/

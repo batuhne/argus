@@ -87,6 +87,8 @@ def test_train_with_splits_bootstraps_champion_on_first_run(
     monkeypatch: pytest.MonkeyPatch,
     make_synthetic_split: SyntheticSplit,
 ) -> None:
+    # mlflow 3.14 requires this opt-in to use its maintenance-mode file store (tests only).
+    monkeypatch.setenv("MLFLOW_ALLOW_FILE_STORE", "true")
     monkeypatch.setenv("MLFLOW_TRACKING_URI", f"file://{tmp_path / 'mlruns'}")
     monkeypatch.setenv("MLFLOW_REGISTRY_URI", f"file://{tmp_path / 'mlruns'}")
     cfg = _config(tmp_path)
@@ -116,6 +118,8 @@ def test_gate_blocks_promotion_when_challenger_cost_regresses(
     monkeypatch: pytest.MonkeyPatch,
     make_synthetic_split: SyntheticSplit,
 ) -> None:
+    # mlflow 3.14 requires this opt-in to use its maintenance-mode file store (tests only).
+    monkeypatch.setenv("MLFLOW_ALLOW_FILE_STORE", "true")
     monkeypatch.setenv("MLFLOW_TRACKING_URI", f"file://{tmp_path / 'mlruns'}")
     monkeypatch.setenv("MLFLOW_REGISTRY_URI", f"file://{tmp_path / 'mlruns'}")
     cfg = _config(tmp_path)

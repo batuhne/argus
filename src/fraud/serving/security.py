@@ -120,6 +120,7 @@ class RateLimitMiddleware:
         if scope["type"] != "http" or scope.get("path") in UNLIMITED_PATHS:
             await self._app(scope, receive, send)
             return
+        # The internal key skips shedding; a leaked key is unthrottled, so rotate it on exposure.
         if self._is_trusted(scope):
             await self._app(scope, receive, send)
             return

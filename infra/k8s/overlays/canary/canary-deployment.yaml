@@ -1,5 +1,5 @@
-# Candidate taking a small slice of real traffic. The rollout controller raises
-# its weight through the ramp and rolls back to zero on any SLO or quality breach.
+# Candidate taking a small slice of real traffic. serving/canary.py gates each ramp step
+# (promote/hold/rollback); the weight is patched by hand (no in-cluster controller drives the ramp).
 apiVersion: apps/v1
 kind: Deployment
 metadata:

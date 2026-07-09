@@ -219,7 +219,8 @@ def _load_encoder(run_id: str, run_tags: dict[str, str]) -> CategoricalEncoder:
 def _verify_artifact_integrity(
     path: Path, run_tags: dict[str, str], tag_key: str, name: str
 ) -> None:
-    # Raises outside the load-retry path so a tampered or unhashed artifact fails fast.
+    # The hash is an MLflow run tag beside the artifact: catches corruption and accidental swaps,
+    # not a store-level attacker. Raised outside the retry path so a bad artifact fails fast.
     expected = run_tags.get(tag_key)
     if not expected:
         raise ArtifactIntegrityError(

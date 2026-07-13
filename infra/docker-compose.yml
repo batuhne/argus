@@ -179,6 +179,8 @@ services:
       - --artifacts-destination=s3://mlflow
       - --host=0.0.0.0
       - --port=5000
+      # mlflow 3.14 rejects non-localhost Host headers as DNS rebinding; allow the compose service name.
+      - --allowed-hosts=localhost,localhost:5000,localhost:5500,127.0.0.1,mlflow,mlflow:5000
     # Host 5000 is held by the macOS AirPlay receiver, so expose 5500.
     ports:
       - "5500:5000"

@@ -131,6 +131,49 @@ def test_assemble_does_not_mutate_input_frame(encoder: CategoricalEncoder) -> No
     assert "C1" not in online.columns
 
 
+def _online_row_absent_card() -> pd.DataFrame:
+    # Feast returns an entity it never materialized as object-dtype nulls.
+    row: dict[str, Any] = {"card_id": "9_9_9_9", "amt_to_card_mean_24h": 1.0, "amt_log": 5.0}
+    for column in fl.VELOCITY_COLUMNS:
+        row[column] = None
+    return pd.DataFrame([row])
+
+
+def test_assemble_fills_velocity_for_a_card_absent_from_the_store(
+    encoder: CategoricalEncoder,
+) -> None:
+    # A never-seen card must score, not crash the model on an object dtype.
+    assembled = assemble_features(
+        _online_row_absent_card(), amount=150.0, raw=RawAttributes(), encoder=encoder
+    )
+    for column, empty in fl.VELOCITY_EMPTY_FILL.items():
+        assert assembled[column].dtype == "float32", column
+        assert assembled[column].iloc[0] == empty, column
+
+
+def test_assemble_preserves_a_present_cards_velocity(encoder: CategoricalEncoder) -> None:
+    # A materialized card's real velocity must pass through, not be stomped by the fill.
+    assembled = assemble_features(_online_row(), amount=150.0, raw=RawAttributes(), encoder=encoder)
+    assert assembled["card_txn_count_24h"].iloc[0] == pytest.approx(4.0)
+    assert assembled["seconds_since_prev_txn"].iloc[0] == pytest.approx(1800.0)
+    assert assembled["card_txn_count_24h"].dtype == "float32"
+
+
+def test_velocity_empty_fill_matches_the_offline_empty_window() -> None:
+    # A single transaction is a first-seen card: the offline empty window must equal
+    # what serving fills for a card the store never saw, or train and serve diverge.
+    frame = pd.DataFrame(
+        {
+            "card_id": ["1_2_3_5"],
+            "event_timestamp": [fl.REFERENCE_DATETIME],
+            "TransactionAmt": [100.0],
+        }
+    )
+    velocity = fl.compute_card_velocity(frame)
+    for column, empty in fl.VELOCITY_EMPTY_FILL.items():
+        assert velocity[column].iloc[0] == empty, column
+
+
 class _FakeOnlineResponse:
     def __init__(self, frame: pd.DataFrame) -> None:
         self._frame = frame

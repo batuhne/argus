@@ -67,6 +67,7 @@ def assemble_features(
     encoded = encoder.transform(categorical_frame)
     frame = pd.concat([frame, raw_frame, v_frame, encoded], axis=1)
     frame = fl.coerce_numeric(frame, [*fl.RAW_NUMERIC_PASSTHROUGH, *fl.V_SELECTED])
+    frame = fl.fill_missing_velocity(frame)
     return frame.loc[:, list(FEATURE_COLUMNS)]
 
 

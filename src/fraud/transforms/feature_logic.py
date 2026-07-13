@@ -23,16 +23,21 @@ REFERENCE_DATETIME = datetime(2017, 12, 1, tzinfo=UTC)
 IDENTITY_COLUMNS = ("card1", "card2", "card3", "card5")
 
 VELOCITY_WINDOW = "24h"
-VELOCITY_COLUMNS = (
-    "card_txn_count_24h",
-    "card_amt_sum_24h",
-    "card_amt_mean_24h",
-    "card_amt_max_24h",
-    "seconds_since_prev_txn",
-)
 
 # seconds_since_prev_txn when the card has no earlier transaction.
 NO_PRIOR_TXN = -1.0
+
+# The values compute_card_velocity assigns an empty 24h window. Serving fills a
+# card the online store never saw with the same, so a first-seen card matches
+# training instead of reaching the model as an object-dtype null.
+VELOCITY_EMPTY_FILL: dict[str, float] = {
+    "card_txn_count_24h": 0.0,
+    "card_amt_sum_24h": 0.0,
+    "card_amt_mean_24h": 0.0,
+    "card_amt_max_24h": 0.0,
+    "seconds_since_prev_txn": NO_PRIOR_TXN,
+}
+VELOCITY_COLUMNS = tuple(VELOCITY_EMPTY_FILL)
 
 # Per-transaction C (counts), D (time deltas), distance and address fields. They
 # ride the request and reach the trees with NaN intact: missingness is signal.
@@ -123,11 +128,16 @@ def compute_card_velocity(frame: pd.DataFrame) -> pd.DataFrame:
     gap = work.groupby("card_id", sort=True)["event_timestamp"].diff().dt.total_seconds()
 
     out = work[["card_id", "event_timestamp"]].copy()
-    out["card_txn_count_24h"] = rolling.count().fillna(0.0).to_numpy().astype("float32")
-    out["card_amt_sum_24h"] = rolling.sum().fillna(0.0).to_numpy().astype("float32")
-    out["card_amt_mean_24h"] = rolling.mean().fillna(0.0).to_numpy().astype("float32")
-    out["card_amt_max_24h"] = rolling.max().fillna(0.0).to_numpy().astype("float32")
-    out["seconds_since_prev_txn"] = gap.fillna(NO_PRIOR_TXN).to_numpy().astype("float32")
+    # Same VELOCITY_EMPTY_FILL serving uses, so the offline and online empty window cannot drift.
+    aggregations = {
+        "card_txn_count_24h": rolling.count(),
+        "card_amt_sum_24h": rolling.sum(),
+        "card_amt_mean_24h": rolling.mean(),
+        "card_amt_max_24h": rolling.max(),
+        "seconds_since_prev_txn": gap,
+    }
+    for column, series in aggregations.items():
+        out[column] = series.fillna(VELOCITY_EMPTY_FILL[column]).to_numpy().astype("float32")
     return out
 
 
@@ -137,6 +147,17 @@ def coerce_numeric(frame: pd.DataFrame, columns: Sequence[str]) -> pd.DataFrame:
     for column in columns:
         coerced = pd.to_numeric(frame[column], errors="coerce").astype("float32")
         out[column] = coerced.where(np.isfinite(coerced))
+    return out
+
+
+def fill_missing_velocity(frame: pd.DataFrame) -> pd.DataFrame:
+    """Coerce the online velocity columns to float32, filling a card the store never
+    saw with the empty-window values training used. Feast returns an unseen entity's
+    features as an object-dtype null, which otherwise crashes the model at predict."""
+    out = frame.copy()
+    for column, empty in VELOCITY_EMPTY_FILL.items():
+        coerced = pd.to_numeric(frame[column], errors="coerce").astype("float32")
+        out[column] = coerced.where(np.isfinite(coerced), empty)
     return out
 
 
